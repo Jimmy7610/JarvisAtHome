@@ -50,25 +50,27 @@ export default function ActivityPanel({
           return (
             <div
               key={e.id}
-              className={`rounded px-3 py-2 ${styles.card}`}
+              className={`rounded px-3 py-2.5 ${styles.card}`}
             >
               <div className="flex items-start justify-between gap-2">
-                <p className={`text-xs leading-relaxed ${styles.text}`}>
+                <p
+                  className={`text-xs leading-relaxed break-words overflow-wrap-anywhere flex-1 min-w-0 ${styles.text}`}
+                >
                   {e.text}
                 </p>
                 {styles.badge && (
                   <span
-                    className={`flex-shrink-0 text-xs px-1 py-px rounded text-slate-900 font-medium ${
+                    className={`flex-shrink-0 ml-1 text-xs px-1.5 py-px rounded font-medium ${
                       e.type === "write"
-                        ? "bg-amber-500/60"
-                        : "bg-red-500/60"
+                        ? "bg-amber-500/60 text-slate-900"
+                        : "bg-red-500/60 text-slate-100"
                     }`}
                   >
                     {styles.badge}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-600 mt-0.5">{e.time}</p>
+              <p className="text-xs text-slate-600 mt-1">{e.time}</p>
             </div>
           );
         })}

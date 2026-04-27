@@ -38,9 +38,140 @@ function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
   return result;
 }
 
-// Matches a ```jarvis-write-proposal ... ``` fenced block in an assistant response.
-// The capture group contains the raw JSON body.
-const WRITE_PROPOSAL_REGEX = /```jarvis-write-proposal\s*\n([\s\S]*?)\n```/;
+// ─── Robust write-proposal extractor ─────────────────────────────────────────
+//
+// Ollama models are inconsistent about markdown fence syntax — they sometimes omit
+// the closing ```, put the tag on the same line as the opening fence, or on the
+// next line.  Regex-based approaches that rely on fence structure have proven
+// unreliable across these variants.
+//
+// Instead we use a two-step approach:
+//   1. Find the literal marker string "jarvis-write-proposal" in the text.
+//   2. Scan forward from the marker to find the first { and extract the complete
+//      JSON object using brace balancing, correctly skipping braces inside strings
+//      and handling all JSON escape sequences.
+//
+// The extracted JSON is only accepted if it parses successfully and contains
+// non-empty `path` and `content` string fields. This prevents any prose from
+// being misidentified as a proposal.
+
+// Internal result of extractWriteProposal — not exported.
+interface ProposalExtract {
+  blockStart: number; // index of the opening ``` (or the marker itself if no fence)
+  blockEnd: number;   // index just past the last consumed character (incl. optional closing fence)
+  jsonBody: string;   // the raw JSON string, ready for JSON.parse
+}
+
+// Locate the write proposal marker, walk back to the opening fence (if present),
+// then extract the first complete JSON object using brace balancing.
+function extractWriteProposal(text: string): ProposalExtract | null {
+  const MARKER = "jarvis-write-proposal";
+
+  // Step 1 — find the marker
+  const markerPos = text.indexOf(MARKER);
+  if (markerPos === -1) return null;
+
+  // Step 2 — walk back from the marker to find where the block visually starts.
+  // We look for an opening ``` fence either:
+  //   • on the same line as the marker  (Format A: ```jarvis-write-proposal)
+  //   • on the line immediately above   (Format B: ```\njarvis-write-proposal)
+  let blockStart = markerPos; // fallback: start at the marker itself
+
+  const markerLineStart = text.lastIndexOf("\n", markerPos - 1) + 1; // first char of marker's line
+  const textBeforeMarkerOnLine = text.slice(markerLineStart, markerPos);
+  const sameFenceIdx = textBeforeMarkerOnLine.indexOf("```");
+
+  if (sameFenceIdx !== -1) {
+    // Format A: opening fence and marker share a line
+    blockStart = markerLineStart + sameFenceIdx;
+  } else if (markerLineStart > 0) {
+    // Check the line above for a bare opening fence (Format B)
+    const prevLineEnd = markerLineStart - 1;
+    const prevLineStart = text.lastIndexOf("\n", prevLineEnd - 1) + 1;
+    const prevLine = text.slice(prevLineStart, prevLineEnd);
+    const prevFenceIdx = prevLine.indexOf("```");
+    if (prevFenceIdx !== -1 && prevLine.slice(0, prevFenceIdx).trim() === "") {
+      blockStart = prevLineStart + prevFenceIdx;
+    }
+  }
+
+  // Step 3 — scan forward from the end of the marker to the first {
+  let jsonStart = -1;
+  for (let i = markerPos + MARKER.length; i < text.length; i++) {
+    if (text[i] === "{") {
+      jsonStart = i;
+      break;
+    }
+  }
+  if (jsonStart === -1) return null;
+
+  // Step 4 — brace-balance to extract the complete JSON object.
+  // Track whether we are inside a JSON string so that { and } inside string
+  // values are not counted.  Handle all JSON escape sequences (\", \\, \n, …).
+  let depth = 0;
+  let inString = false;
+  let i = jsonStart;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    if (inString) {
+      if (ch === "\\") {
+        i += 2; // skip the escaped character (handles \", \\, \n, \r, \t, …)
+        continue;
+      }
+      if (ch === '"') inString = false;
+    } else {
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const jsonEnd = i + 1;
+          const jsonBody = text.slice(jsonStart, jsonEnd);
+
+          // Validate: must be parseable JSON with a non-empty path string and a content string
+          let parsed: { path?: unknown; content?: unknown };
+          try {
+            parsed = JSON.parse(jsonBody) as { path?: unknown; content?: unknown };
+          } catch {
+            return null; // malformed JSON — not a valid proposal
+          }
+          if (typeof parsed.path !== "string" || !parsed.path.trim()) return null;
+          if (typeof parsed.content !== "string") return null;
+
+          // Step 5 — consume the optional closing fence that follows the JSON object
+          let blockEnd = jsonEnd;
+          const afterJson = text.slice(jsonEnd);
+          const closingFence = /^[ \t]*\r?\n[ \t]*```/.exec(afterJson);
+          if (closingFence) blockEnd += closingFence[0].length;
+
+          return { blockStart, blockEnd, jsonBody };
+        }
+      }
+    }
+
+    i++;
+  }
+
+  return null; // JSON object was never closed — incomplete response
+}
+
+// Adapter: presents the ProposalExtract in the shape expected by
+// parseProposalBlock() and detectAndPropose() (unchanged callers).
+function matchProposalBlock(
+  text: string
+): { fullMatch: string; index: number; jsonBody: string } | null {
+  const extracted = extractWriteProposal(text);
+  if (!extracted) return null;
+  return {
+    index: extracted.blockStart,
+    fullMatch: text.slice(extracted.blockStart, extracted.blockEnd),
+    jsonBody: extracted.jsonBody,
+  };
+}
 
 interface ChatMessage {
   role: "user" | "assistant" | "error" | "cancelled";
@@ -270,6 +401,8 @@ export default function ChatPanel({
   const abortControllerRef = useRef<AbortController | null>(null);
   // Holds the active backend session id once ensureSession resolves
   const sessionIdRef = useRef<number | null>(null);
+  // Ref to the textarea so we can drive its height for auto-grow behaviour
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   // "backend" = history loaded from SQLite; "local" = localStorage or default
   const [historySource, setHistorySource] = useState<
     "backend" | "local" | null
@@ -374,8 +507,8 @@ export default function ChatPanel({
   // On success the diff is stored in chatProposal and shown in the UI.
   // Nothing is written to disk here — the user must click "Approve write".
   async function detectAndPropose(text: string): Promise<void> {
-    const match = WRITE_PROPOSAL_REGEX.exec(text);
-    if (!match) return;
+    const result = matchProposalBlock(text);
+    if (!result) return;
 
     onActivity?.("Chat write proposal detected — creating proposal…", "info");
     setChatProposalLoading(true);
@@ -384,7 +517,7 @@ export default function ChatPanel({
 
     let parsed: { path?: unknown; content?: unknown };
     try {
-      parsed = JSON.parse(match[1]) as { path?: unknown; content?: unknown };
+      parsed = JSON.parse(result.jsonBody) as { path?: unknown; content?: unknown };
     } catch {
       const errMsg = "Failed to parse write proposal JSON from assistant response.";
       setChatProposalError(errMsg);
@@ -706,6 +839,22 @@ export default function ChatPanel({
     }
   };
 
+  // Auto-grow the textarea to fit its content, capped at 200px.
+  // When the user clears the input (e.g. after send), height resets to minHeight via CSS.
+  function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>): void {
+    setInput(e.target.value);
+    const ta = e.target;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }
+
+  // Reset textarea height when the input value is cleared programmatically (post-send).
+  useEffect(() => {
+    if (input === "" && textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  }, [input]);
+
   // Allow Shift+Enter for newlines; Enter alone submits
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -938,13 +1087,14 @@ export default function ChatPanel({
         )}
         <div className="flex gap-3 items-end">
           <textarea
-            rows={1}
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={loading ? "Jarvis is responding…" : "Message Jarvis…"}
             disabled={loading}
-            className="flex-1 resize-none rounded-lg bg-slate-800/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            style={{ minHeight: "72px", maxHeight: "200px", overflowY: "auto" }}
+            className="flex-1 resize-none rounded-lg bg-slate-800/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 leading-relaxed placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           />
 
           {/* Stop button — always rendered to prevent layout shift; invisible when idle */}
@@ -978,6 +1128,28 @@ export default function ChatPanel({
   );
 }
 
+// Split an assistant message into segments around a jarvis-write-proposal block.
+// Returns { before, proposalPath, after } so AssistantMessage can render a styled callout
+// instead of the raw fenced block. Returns null when no proposal block is present.
+function parseProposalBlock(text: string): {
+  before: string;
+  proposalPath: string;
+  after: string;
+} | null {
+  const result = matchProposalBlock(text);
+  if (!result) return null;
+  const before = text.slice(0, result.index).trimEnd();
+  const after = text.slice(result.index + result.fullMatch.length).trimStart();
+  let proposalPath = "";
+  try {
+    const parsed = JSON.parse(result.jsonBody) as { path?: unknown };
+    if (typeof parsed.path === "string") proposalPath = parsed.path.trim();
+  } catch {
+    // JSON parse failed — callout still renders without the path name
+  }
+  return { before, proposalPath, after };
+}
+
 function AssistantMessage({
   text,
   showCursor,
@@ -985,6 +1157,8 @@ function AssistantMessage({
   text: string;
   showCursor?: boolean;
 }) {
+  const proposal = parseProposalBlock(text);
+
   return (
     <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center flex-shrink-0 text-cyan-400 text-xs font-bold">
@@ -992,13 +1166,58 @@ function AssistantMessage({
       </div>
       <div className="flex-1">
         <p className="text-xs text-cyan-400 font-medium mb-1">Jarvis</p>
-        <div className="rounded-lg bg-slate-800/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-300 whitespace-pre-wrap">
-          {text}
-          {/* Blinking cursor while tokens are arriving */}
-          {showCursor && (
-            <span className="inline-block w-0.5 h-3.5 bg-cyan-400 ml-0.5 align-middle animate-pulse" />
-          )}
-        </div>
+
+        {proposal ? (
+          /* Message contains a write proposal — split into text + callout + text */
+          <div className="space-y-2">
+            {proposal.before && (
+              <div className="rounded-lg bg-slate-800/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-300 whitespace-pre-wrap">
+                {proposal.before}
+              </div>
+            )}
+
+            {/* Styled proposal callout — replaces the raw fenced block */}
+            <div className="rounded-lg bg-amber-900/10 border border-amber-500/20 px-4 py-3">
+              <div className="flex items-start gap-2.5">
+                <span className="text-amber-400 text-sm flex-shrink-0 mt-px select-none">
+                  ⚑
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-amber-400">
+                    Jarvis proposed a workspace file change
+                  </p>
+                  {proposal.proposalPath && (
+                    <p className="text-xs text-amber-600 mt-0.5 font-mono break-all">
+                      workspace/{proposal.proposalPath}
+                    </p>
+                  )}
+                  <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                    Review the diff in the approval panel below before applying.
+                    Nothing has been written yet.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {proposal.after && (
+              <div className="rounded-lg bg-slate-800/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-300 whitespace-pre-wrap">
+                {proposal.after}
+                {showCursor && (
+                  <span className="inline-block w-0.5 h-3.5 bg-cyan-400 ml-0.5 align-middle animate-pulse" />
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Normal message — no proposal block */
+          <div className="rounded-lg bg-slate-800/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-300 whitespace-pre-wrap">
+            {text}
+            {/* Blinking cursor while tokens are arriving */}
+            {showCursor && (
+              <span className="inline-block w-0.5 h-3.5 bg-cyan-400 ml-0.5 align-middle animate-pulse" />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -320,7 +320,7 @@ export default function DashboardPage() {
         <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden">
           <StatusPanel />
           {/* ActivityPanel fixed height so WorkspacePanel gets remaining space */}
-          <div className="flex-none" style={{ height: "148px", overflow: "hidden" }}>
+          <div className="flex-none" style={{ height: "200px", overflow: "hidden" }}>
             <ActivityPanel events={activities} />
           </div>
           <WorkspacePanel
