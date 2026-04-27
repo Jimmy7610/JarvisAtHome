@@ -208,4 +208,29 @@ router.patch("/:id", (req: Request, res: Response) => {
   res.json({ ok: true, session });
 });
 
+// DELETE /sessions/:id
+// Deletes a session and all its messages (messages removed via ON DELETE CASCADE).
+// Returns: { ok: true, deletedSessionId: 123 }
+// Returns: { ok: false, error: "..." } if id is invalid or session not found.
+router.delete("/:id", (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.json({ ok: false, error: "Invalid session id." });
+    return;
+  }
+
+  const session = db
+    .prepare("SELECT id FROM chat_sessions WHERE id = ?")
+    .get(id);
+
+  if (!session) {
+    res.json({ ok: false, error: "Session not found." });
+    return;
+  }
+
+  db.prepare("DELETE FROM chat_sessions WHERE id = ?").run(id);
+
+  res.json({ ok: true, deletedSessionId: id });
+});
+
 export default router;

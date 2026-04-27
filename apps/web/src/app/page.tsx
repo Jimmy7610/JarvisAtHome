@@ -103,6 +103,40 @@ export default function DashboardPage() {
     // ChatPanel remounts via the key prop — it loads the new session's history automatically
   }
 
+  // Delete a session by id. If it was the active session, create a replacement.
+  async function handleDeleteSession(id: number): Promise<void> {
+    try {
+      const res = await fetch(`${API_URL}/sessions/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        console.warn("Delete session: HTTP error", res.status);
+        return;
+      }
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        console.warn("Delete session failed:", data.error);
+        return;
+      }
+    } catch (err) {
+      console.warn("Delete session: request failed:", err);
+      return;
+    }
+
+    // If the deleted session was active, create a fresh replacement session
+    if (id === activeSessionId) {
+      try {
+        localStorage.removeItem(CHAT_CACHE_KEY);
+      } catch {}
+      const newId = await createNewSession();
+      // setActiveSessionId with null is safe — ChatPanel renders null key which shows greeting
+      setActiveSessionId(newId);
+    }
+
+    // Refresh the sidebar list regardless
+    void fetchSessions();
+  }
+
   // Create a new blank session and switch to it
   async function handleNewChat(): Promise<void> {
     const id = await createNewSession();
@@ -144,6 +178,7 @@ export default function DashboardPage() {
           loading={sessionsLoading}
           onNewChat={() => void handleNewChat()}
           onSelect={handleSwitchSession}
+          onDelete={(id) => void handleDeleteSession(id)}
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">

@@ -16,6 +16,7 @@ interface SessionListProps {
   loading: boolean;
   onNewChat: () => void;
   onSelect: (id: number) => void;
+  onDelete: (id: number) => void;
 }
 
 // Format updated_at date (SQLite UTC string) as a short human label.
@@ -37,6 +38,7 @@ export default function SessionList({
   loading,
   onNewChat,
   onSelect,
+  onDelete,
 }: SessionListProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -70,21 +72,46 @@ export default function SessionList({
         {sessions.map((session) => {
           const isActive = session.id === activeSessionId;
           return (
-            <button
+            // Outer container: hover group so delete button fades in on row hover
+            <div
               key={session.id}
-              onClick={() => onSelect(session.id)}
-              className={`w-full text-left px-3 py-2 rounded transition-colors
+              className={`group flex items-center rounded transition-colors
                 ${
                   isActive
-                    ? "bg-slate-700/60 text-slate-200"
-                    : "text-slate-500 hover:bg-slate-800/60 hover:text-slate-300"
+                    ? "bg-slate-700/60"
+                    : "hover:bg-slate-800/60"
                 }`}
             >
-              <div className="text-xs font-medium truncate">{session.title}</div>
-              <div className="text-xs text-slate-700 mt-0.5">
-                {formatDate(session.updated_at)}
-              </div>
-            </button>
+              {/* Select button — fills the row, leaves space for delete button */}
+              <button
+                onClick={() => onSelect(session.id)}
+                className={`flex-1 min-w-0 text-left px-3 py-2
+                  ${isActive ? "text-slate-200" : "text-slate-500 hover:text-slate-300"}`}
+              >
+                <div className="text-xs font-medium truncate pr-1">{session.title}</div>
+                <div className="text-xs text-slate-700 mt-0.5">
+                  {formatDate(session.updated_at)}
+                </div>
+              </button>
+
+              {/* Delete button — subtle ×, only visible on row hover */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const confirmed = window.confirm(
+                    `Delete chat "${session.title}"? This cannot be undone.`
+                  );
+                  if (confirmed) onDelete(session.id);
+                }}
+                className="flex-shrink-0 mr-2 px-1 text-slate-600
+                           hover:text-red-400 opacity-0 group-hover:opacity-100
+                           focus:opacity-100 transition-opacity text-sm leading-none"
+                aria-label={`Delete "${session.title}"`}
+                title="Delete chat"
+              >
+                ×
+              </button>
+            </div>
           );
         })}
       </div>
