@@ -2,7 +2,8 @@
 
 // Workspace file browser — read-only view of the Jarvis sandbox workspace.
 // Files can be listed and read; no write, edit, delete, or move actions exist.
-// v0.2.3: supports subdirectory navigation with breadcrumb path indicator.
+// v0.2.3: subdirectory navigation with breadcrumb path indicator.
+// v0.2.5: manual refresh button reloads the current folder listing.
 
 import { useState, useEffect } from "react";
 
@@ -87,7 +88,9 @@ export default function WorkspacePanel({
     void fetchList(currentPath);
   }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function fetchList(dirPath: string): Promise<void> {
+  // Fetch a directory listing and update entries state.
+  // Returns the fetched entries so callers can inspect them (e.g. refreshWorkspace).
+  async function fetchList(dirPath: string): Promise<FileEntry[]> {
     setListLoading(true);
     setListError(null);
     try {
@@ -98,13 +101,28 @@ export default function WorkspacePanel({
       const data = (await res.json()) as ListResponse;
       if (!data.ok) {
         setListError(data.error ?? "Failed to list workspace files.");
-        return;
+        return [];
       }
-      setEntries(data.entries ?? []);
+      const newEntries = data.entries ?? [];
+      setEntries(newEntries);
+      return newEntries;
     } catch {
       setListError("API unreachable — is the Jarvis API running?");
+      return [];
     } finally {
       setListLoading(false);
+    }
+  }
+
+  // Reload the current directory. Clears the file preview if the selected file
+  // is no longer present in the refreshed listing.
+  async function refreshWorkspace(): Promise<void> {
+    const newEntries = await fetchList(currentPath);
+    if (selectedPath !== null) {
+      const stillExists = newEntries.some(
+        (e) => e.type === "file" && e.path === selectedPath
+      );
+      if (!stillExists) closePreview();
     }
   }
 
@@ -187,9 +205,21 @@ export default function WorkspacePanel({
         <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">
           Workspace Files
         </span>
-        <span className="text-xs text-slate-700 bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-700">
-          Read-only
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Refresh button — reloads the current directory listing */}
+          <button
+            onClick={() => void refreshWorkspace()}
+            disabled={listLoading}
+            className={`text-slate-600 hover:text-slate-400 transition-colors text-sm leading-none disabled:opacity-40 disabled:cursor-not-allowed ${listLoading ? "animate-spin" : ""}`}
+            title="Refresh file list"
+            aria-label="Refresh"
+          >
+            ↻
+          </button>
+          <span className="text-xs text-slate-700 bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-700">
+            Read-only
+          </span>
+        </div>
       </div>
 
       {/* Breadcrumb / path indicator */}
