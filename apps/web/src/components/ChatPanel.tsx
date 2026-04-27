@@ -9,21 +9,65 @@ interface ChatMessage {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+// localStorage key for chat history
+const STORAGE_KEY = "jarvis.chat.v1";
+
+const DEFAULT_GREETING: ChatMessage = {
+  role: "assistant",
+  text: "Hello. I am Jarvis — your local AI assistant. Type a message below to get started.",
+};
+
+// Read saved messages from localStorage.
+// Returns null if localStorage is unavailable (SSR) or the stored value is invalid.
+function loadMessages(): ChatMessage[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed as ChatMessage[];
+  } catch {
+    return null;
+  }
+}
+
+// Persist messages to localStorage.
+// Silent no-op in SSR or if storage is unavailable (e.g. private mode quota).
+function saveMessages(messages: ChatMessage[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+  } catch {
+    // Storage quota exceeded or blocked — not fatal, just skip saving
+  }
+}
+
 export default function ChatPanel() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      text: "Hello. I am Jarvis — your local AI assistant. Type a message below to get started.",
-    },
-  ]);
+  // Lazy initialiser: load from localStorage on first render, fall back to greeting
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const saved = loadMessages();
+    return saved && saved.length > 0 ? saved : [DEFAULT_GREETING];
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Persist messages to localStorage whenever they change
+  useEffect(() => {
+    saveMessages(messages);
+  }, [messages]);
 
   // Scroll to latest message whenever the list changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  const clearChat = () => {
+    if (!window.confirm("Clear all chat history? This cannot be undone.")) return;
+    localStorage.removeItem(STORAGE_KEY);
+    setMessages([DEFAULT_GREETING]);
+  };
 
   const send = async (e: FormEvent) => {
     e.preventDefault();
@@ -86,11 +130,21 @@ export default function ChatPanel() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-800">
-        <h2 className="text-sm font-semibold text-slate-200">Chat</h2>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Non-streaming · Ollama · local only
-        </p>
+      <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-200">Chat</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Non-streaming · Ollama · local only
+          </p>
+        </div>
+        <button
+          onClick={clearChat}
+          disabled={loading}
+          className="text-xs text-slate-600 hover:text-slate-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Clear chat history"
+        >
+          Clear chat
+        </button>
       </div>
 
       {/* Message list */}
