@@ -159,17 +159,97 @@ function extractWriteProposal(text: string): ProposalExtract | null {
   return null; // JSON object was never closed — incomplete response
 }
 
+// ─── Bare-JSON fallback extractor ─────────────────────────────────────────────
+//
+// Preferred format: the jarvis-write-proposal fenced block (handled by extractWriteProposal above).
+// This fallback exists because local Ollama models sometimes omit the custom fence marker
+// and output a bare JSON object or a plain fenced JSON block instead.
+//
+// STRICT conditions — the fallback ONLY fires when ALL of these hold:
+//   1. The ENTIRE assistant response is just a JSON object or a single fenced block.
+//      Any surrounding explanatory prose causes immediate rejection.
+//   2. JSON.parse succeeds on the extracted body.
+//   3. parsed.path is a non-empty string.
+//   4. parsed.content is a string.
+//
+// The fallback still creates only a PENDING proposal — backend validation and the
+// user's Approve click are still required before any file is written.
+//
+// Accepted:
+//   Raw JSON only:    {"path":"file.md","content":"# Hello\nWorld"}
+//   Fenced JSON only: ```json\n{...}\n```  or  ```\n{...}\n```
+//
+// Rejected:
+//   Any surrounding explanatory prose or extra text
+//   Malformed or partial JSON
+//   JSON without required path and content string fields
+
+function extractBareJsonProposal(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  let candidate: string | null = null;
+
+  // Case 1 — raw JSON object: entire response starts with { and ends with }
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    candidate = trimmed;
+  }
+
+  // Case 2 — single fenced block (```json or ```): entire response is the fence
+  if (candidate === null) {
+    const fenceMatch = /^```(?:json)?\s*\r?\n([\s\S]+?)\r?\n[ \t]*```\s*$/.exec(trimmed);
+    if (fenceMatch) {
+      const inner = fenceMatch[1].trim();
+      if (inner.startsWith("{") && inner.endsWith("}")) {
+        candidate = inner;
+      }
+    }
+  }
+
+  if (candidate === null) return null;
+
+  // Validate: must parse and have the required proposal shape
+  let parsed: { path?: unknown; content?: unknown };
+  try {
+    parsed = JSON.parse(candidate) as { path?: unknown; content?: unknown };
+  } catch {
+    return null; // malformed or partial JSON
+  }
+  if (typeof parsed.path !== "string" || !parsed.path.trim()) return null;
+  if (typeof parsed.content !== "string") return null;
+
+  return candidate;
+}
+
 // Adapter: presents the ProposalExtract in the shape expected by
 // parseProposalBlock() and detectAndPropose() (unchanged callers).
+// Tries the marker-based extractor first, then the bare-JSON fallback.
 function matchProposalBlock(
   text: string
 ): { fullMatch: string; index: number; jsonBody: string } | null {
+  // Preferred path: marker-based extraction (jarvis-write-proposal)
   const extracted = extractWriteProposal(text);
-  if (!extracted) return null;
+  if (extracted) {
+    return {
+      index: extracted.blockStart,
+      fullMatch: text.slice(extracted.blockStart, extracted.blockEnd),
+      jsonBody: extracted.jsonBody,
+    };
+  }
+
+  // Fallback path: bare JSON proposal when the model omitted the marker.
+  // Only fires when the entire response is a single JSON object or fenced block.
+  const bareJson = extractBareJsonProposal(text);
+  if (!bareJson) return null;
+
+  // Position the "block" to span the full trimmed content so that parseProposalBlock
+  // computes empty before/after segments — there is no surrounding prose to display.
+  const leadingSpace = text.length - text.trimStart().length;
+  const trimmedContent = text.slice(leadingSpace).trimEnd();
   return {
-    index: extracted.blockStart,
-    fullMatch: text.slice(extracted.blockStart, extracted.blockEnd),
-    jsonBody: extracted.jsonBody,
+    index: leadingSpace,
+    fullMatch: trimmedContent,
+    jsonBody: bareJson,
   };
 }
 
@@ -510,7 +590,14 @@ export default function ChatPanel({
     const result = matchProposalBlock(text);
     if (!result) return;
 
-    onActivity?.("Chat write proposal detected — creating proposal…", "info");
+    // Distinguish in the activity log whether the preferred marker path or the bare-JSON fallback fired
+    const isBareJsonFallback = !text.includes("jarvis-write-proposal");
+    onActivity?.(
+      isBareJsonFallback
+        ? "Chat write proposal detected (bare JSON fallback) — creating proposal…"
+        : "Chat write proposal detected — creating proposal…",
+      "info"
+    );
     setChatProposalLoading(true);
     setChatProposalError(null);
     setChatWriteSuccess(false);
@@ -635,7 +722,7 @@ export default function ChatPanel({
     if (cancelledPath) {
       onActivity?.(
         `Chat write proposal cancelled for workspace/${cancelledPath}`,
-        "info"
+        "write"
       );
     }
   }
@@ -987,54 +1074,49 @@ export default function ChatPanel({
               </div>
 
               {/* Diff viewer */}
-              <div
-                className="mx-6 mb-2 rounded border border-slate-700/60 overflow-y-auto"
-                style={{ maxHeight: "160px" }}
-              >
-                {getDisplayLines(chatProposal.diff).map((line, i) => {
-                  if (line.type === "gap") {
+              <div className="mx-6 mb-2 rounded border border-slate-700/60 overflow-hidden">
+                {/* Header — file path */}
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border-b border-slate-700/60 select-none">
+                  <span className="text-slate-600 text-xs font-mono">diff</span>
+                  <span className="text-amber-500/80 font-mono text-xs truncate">
+                    workspace/{chatProposal.path}
+                  </span>
+                </div>
+
+                {/* Scrollable diff lines */}
+                <div className="overflow-y-auto" style={{ maxHeight: "190px" }}>
+                  {getDisplayLines(chatProposal.diff).map((line, i) => {
+                    if (line.type === "gap") {
+                      return (
+                        <div
+                          key={i}
+                          className="pl-2 pr-3 py-0.5 text-xs text-slate-600 bg-slate-800/40 text-center select-none border-l-2 border-transparent"
+                        >
+                          ··· {line.count} unchanged line{line.count !== 1 ? "s" : ""} ···
+                        </div>
+                      );
+                    }
+                    // Each line gets a 2px left border for visual scanning.
+                    // Context lines use a transparent border so content stays aligned.
+                    const rowClass =
+                      line.type === "added"
+                        ? "bg-green-900/25 border-l-2 border-green-600 text-green-300"
+                        : line.type === "removed"
+                        ? "bg-red-900/20 border-l-2 border-red-700 text-red-300"
+                        : "border-l-2 border-transparent text-slate-400";
+                    const prefix =
+                      line.type === "added" ? "+" : line.type === "removed" ? "−" : " ";
                     return (
                       <div
                         key={i}
-                        className="px-3 py-0.5 text-xs text-slate-700 bg-slate-800/40 text-center select-none"
+                        className={`flex gap-2 pl-2 pr-3 py-0.5 font-mono text-xs leading-relaxed ${rowClass}`}
                       >
-                        ··· {line.count} unchanged line
-                        {line.count !== 1 ? "s" : ""} ···
+                        <span className="flex-shrink-0 select-none w-3">{prefix}</span>
+                        <span className="whitespace-pre-wrap break-all">{line.content}</span>
                       </div>
                     );
-                  }
-                  const bg =
-                    line.type === "added"
-                      ? "bg-green-900/30"
-                      : line.type === "removed"
-                      ? "bg-red-900/30"
-                      : "";
-                  const text =
-                    line.type === "added"
-                      ? "text-green-300"
-                      : line.type === "removed"
-                      ? "text-red-300"
-                      : "text-slate-600";
-                  const prefix =
-                    line.type === "added"
-                      ? "+"
-                      : line.type === "removed"
-                      ? "-"
-                      : " ";
-                  return (
-                    <div
-                      key={i}
-                      className={`flex gap-2 px-3 py-px font-mono text-xs leading-relaxed ${bg} ${text}`}
-                    >
-                      <span className="flex-shrink-0 select-none w-2.5">
-                        {prefix}
-                      </span>
-                      <span className="whitespace-pre-wrap break-all">
-                        {line.content}
-                      </span>
-                    </div>
-                  );
-                })}
+                  })}
+                </div>
               </div>
 
               {/* Approve / Cancel */}

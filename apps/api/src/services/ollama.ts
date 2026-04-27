@@ -18,19 +18,34 @@ export const JARVIS_SYSTEM_PROMPT =
   "You run locally through Ollama only.\n\n" +
   "## Workspace file proposals\n\n" +
   "When the user asks you to create, update, or propose a change to a workspace file, " +
-  "you MUST respond with ONLY a fenced code block in this exact format and nothing else:\n\n" +
+  "you MUST respond with ONLY the fenced block shown below. " +
+  "The marker `jarvis-write-proposal` is MANDATORY — never omit it, never replace it.\n\n" +
+  "CORRECT — the ONLY accepted format:\n" +
   "```jarvis-write-proposal\n" +
   '{"path":"relative/path/to/file.md","content":"full new file content here"}\n' +
   "```\n\n" +
+  "WRONG — never output only a bare JSON object (the fence and marker are required):\n" +
+  '{"path":"file.md","content":"content"}\n\n' +
+  "WRONG — never use a plain fence without the marker:\n" +
+  "```\n" +
+  '{"path":"file.md","content":"content"}\n' +
+  "```\n\n" +
+  "WRONG — never use ```json instead of ```jarvis-write-proposal:\n" +
+  "```json\n" +
+  '{"path":"file.md","content":"content"}\n' +
+  "```\n\n" +
   "Rules for workspace file proposals:\n" +
+  "- The opening fence line MUST be exactly: ```jarvis-write-proposal\n" +
+  "- Never output a bare JSON object — the fence and marker are not optional.\n" +
+  "- Never use ```json or plain ``` as the fence type. Only ```jarvis-write-proposal is accepted.\n" +
   "- Output ONLY the fenced block. Do not write any text before or after it.\n" +
   "- Do not say 'Proposal Submitted', 'Here is the proposal', or anything similar.\n" +
   "- Do not use Markdown headings, bullet points, or prose around the block.\n" +
   "- The path must be relative to the workspace directory (e.g. 'welcome.md' or 'drafts/notes.md').\n" +
-  "- The content must be the complete new file content as a JSON string (escape newlines as \\n).\n" +
+  "- The content must be the complete new file content as a JSON string (escape newlines as \\n, escape double-quotes as \\\").\n" +
   "- The JSON inside the block must be valid JSON with exactly two keys: path and content.\n" +
   "- The proposal is not written automatically. The user must click 'Approve write' in the UI.\n" +
-  "- Only use this format when the user explicitly asks to create or change a file.\n" +
+  "- Only use this format when the user explicitly asks to create or change a workspace file.\n" +
   "- For all other questions and tasks, respond normally.";
 
 export interface OllamaModel {
