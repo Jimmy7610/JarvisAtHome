@@ -17,6 +17,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 // localStorage key for chat history
 const STORAGE_KEY = "jarvis.chat.v1";
+// localStorage key for the active backend session id
+const SESSION_STORAGE_KEY = "jarvis.session.v1";
 
 const DEFAULT_GREETING: ChatMessage = {
   role: "assistant",
@@ -72,6 +74,73 @@ function buildHistory(messages: ChatMessage[]): HistoryMessage[] {
     .slice(-HISTORY_LIMIT);
 }
 
+// --- Backend session persistence helpers ---
+// These are module-level functions so they can reference the module-level API_URL constant.
+
+// Load the active backend session id from localStorage.
+function loadSessionId(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const id = parseInt(raw, 10);
+    return isNaN(id) ? null : id;
+  } catch {
+    return null;
+  }
+}
+
+// Persist the active backend session id to localStorage.
+function saveSessionId(id: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, String(id));
+  } catch {
+    // Storage quota exceeded — not fatal
+  }
+}
+
+// Create a new backend session and return its id.
+// Returns null if the backend is unreachable — callers degrade gracefully.
+async function createSession(): Promise<number | null> {
+  try {
+    const res = await fetch(`${API_URL}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Jarvis Chat" }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      ok: boolean;
+      session?: { id: number };
+    };
+    if (!data.ok || !data.session?.id) return null;
+    saveSessionId(data.session.id);
+    return data.session.id;
+  } catch {
+    return null;
+  }
+}
+
+// Fire-and-forget: persist one message to the backend.
+// Never throws — failures are logged as console.warn only.
+async function persistMessage(
+  sessionId: number,
+  role: "user" | "assistant" | "error" | "cancelled",
+  content: string,
+  model?: string
+): Promise<void> {
+  try {
+    await fetch(`${API_URL}/sessions/${sessionId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role, content, model }),
+    });
+  } catch (err) {
+    console.warn("[Jarvis] Failed to persist message to backend:", err);
+  }
+}
+
 export default function ChatPanel() {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -85,6 +154,8 @@ export default function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null);
   // Holds the active AbortController so the Stop button can cancel it
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Holds the active backend session id once ensureSession resolves
+  const sessionIdRef = useRef<number | null>(null);
 
   // Load saved chat history from localStorage after the component mounts.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -92,6 +163,15 @@ export default function ChatPanel() {
     const saved = loadMessages();
     if (saved && saved.length > 0) {
       setMessages(saved);
+    }
+    // Ensure a backend session exists. Re-use stored id if available.
+    const existingId = loadSessionId();
+    if (existingId !== null) {
+      sessionIdRef.current = existingId;
+    } else {
+      createSession().then((id) => {
+        sessionIdRef.current = id;
+      });
     }
   }, []);
 
@@ -136,6 +216,17 @@ export default function ChatPanel() {
     // Create a fresh AbortController for this request
     const controller = new AbortController();
     abortControllerRef.current = controller;
+
+    // Snapshot the session id before any await so it stays consistent for this send
+    const sid = sessionIdRef.current;
+    // Persist user message to backend immediately (fire-and-forget)
+    if (sid !== null) {
+      void persistMessage(sid, "user", trimmed);
+    }
+
+    // Track accumulated assistant text and model locally for persistence after streaming
+    let assistantText = "";
+    let modelName: string | undefined;
 
     try {
       const res = await fetch(`${API_URL}/chat/stream`, {
@@ -184,6 +275,8 @@ export default function ChatPanel() {
               setStreaming(true);
             }
 
+            // Accumulate text locally so we can persist the full response later
+            assistantText += chunk.content;
             // Append token to the last message in-place
             setMessages((prev) => {
               const updated = [...prev];
@@ -196,8 +289,10 @@ export default function ChatPanel() {
             });
           } else if (chunk.type === "error") {
             errorText = chunk.error;
+          } else if (chunk.type === "done") {
+            // Capture model name so we can include it when persisting the assistant message
+            modelName = chunk.model;
           }
-          // "done" chunk carries the model name — nothing extra to do
         }
       }
 
@@ -211,6 +306,13 @@ export default function ChatPanel() {
           }
           return updated;
         });
+        // Persist error bubble
+        if (sid !== null) {
+          void persistMessage(sid, "error", errorText);
+        }
+      } else if (assistantText && sid !== null) {
+        // Persist successful assistant response with model name if known
+        void persistMessage(sid, "assistant", assistantText, modelName);
       }
     } catch (err: unknown) {
       // User-initiated abort — not an error
@@ -227,6 +329,14 @@ export default function ChatPanel() {
           }
           return updated;
         });
+        // Persist partial text if tokens arrived, otherwise the cancelled marker
+        if (sid !== null) {
+          if (assistantText) {
+            void persistMessage(sid, "assistant", assistantText, modelName);
+          } else {
+            void persistMessage(sid, "cancelled", "Response cancelled.");
+          }
+        }
         return;
       }
 
@@ -247,6 +357,10 @@ export default function ChatPanel() {
         }
         return updated;
       });
+      // Persist error message
+      if (sid !== null) {
+        void persistMessage(sid, "error", msg);
+      }
     } finally {
       abortControllerRef.current = null;
       setLoading(false);

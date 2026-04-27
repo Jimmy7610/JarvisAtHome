@@ -65,3 +65,6 @@ temp/
 # This folder is created by `graphify query 'rebuild'` and is rebuilt automatically after commits.
 # It is large and machine-specific — do not commit it.
 graphify-out/
+
+# TypeScript cache
+*.tsbuildinfo

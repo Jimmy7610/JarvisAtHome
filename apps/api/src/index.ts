@@ -3,8 +3,11 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { config } from "./config";
+// Import db early so the schema is created before any request arrives
+import "./services/db";
 import ollamaRouter from "./routes/ollama";
 import chatRouter from "./routes/chat";
+import sessionsRouter from "./routes/sessions";
 
 const app = express();
 
@@ -31,6 +34,9 @@ app.use("/ollama", ollamaRouter);
 
 // Chat routes — mounted at /chat
 app.use("/chat", chatRouter);
+
+// Session and message persistence routes — mounted at /sessions
+app.use("/sessions", sessionsRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);
