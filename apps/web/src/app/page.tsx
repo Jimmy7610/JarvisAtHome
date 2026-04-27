@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import StatusPanel from "@/components/StatusPanel";
 import ChatPanel from "@/components/ChatPanel";
 import ActivityPanel from "@/components/ActivityPanel";
@@ -37,6 +37,8 @@ export default function DashboardPage() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   // Gates ChatPanel rendering until the session id is determined
   const [sessionReady, setSessionReady] = useState(false);
+  // Guards against key-repeat creating multiple sessions while Ctrl+Shift+N is held
+  const isCreatingNewChatRef = useRef(false);
 
   // Fetch the session list from the backend and update state
   async function fetchSessions(): Promise<void> {
@@ -94,6 +96,32 @@ export default function DashboardPage() {
         void fetchSessions();
       });
     }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Global keyboard shortcut: Ctrl+Shift+N → new chat.
+  // Ignored while the user is typing in any text field or rename input.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (!e.ctrlKey || !e.altKey || e.key !== "n") return;
+
+      // Do not fire while focus is inside a text field or rename input
+      const target = e.target as HTMLElement;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (target.isContentEditable) return;
+
+      e.preventDefault();
+
+      // Guard against key-repeat (a held key fires continuous keydown events)
+      if (isCreatingNewChatRef.current) return;
+      isCreatingNewChatRef.current = true;
+      void handleNewChat().finally(() => {
+        isCreatingNewChatRef.current = false;
+      });
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch to an existing session

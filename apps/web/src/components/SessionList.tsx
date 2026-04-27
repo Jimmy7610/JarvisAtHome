@@ -99,6 +99,10 @@ export default function SessionList({
         >
           + New Chat
         </button>
+        {/* Keyboard shortcut hint */}
+        <p className="text-center text-xs text-slate-700 mt-1 tracking-wide">
+          Ctrl+Alt+N
+        </p>
       </div>
 
       {/* Section label */}
