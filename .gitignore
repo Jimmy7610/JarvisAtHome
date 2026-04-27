@@ -57,3 +57,6 @@ tmp/
 temp/
 .cache/
 .vs/
+
+# Claude local project settings
+.claude/*.local.json

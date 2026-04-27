@@ -121,8 +121,54 @@ It should include:
 - No Home Assistant yet.
 - No voice yet.
 
+## Development setup
+
+### Prerequisites
+
+- Node.js >= 20
+- npm >= 10
+- Ollama installed locally (not required for v0.1 skeleton)
+
+### Install dependencies
+
+```bash
+npm install
+```
+
+### Run in development
+
+Both apps together:
+
+```bash
+npm run dev
+```
+
+Frontend only (http://localhost:3000):
+
+```bash
+npm run dev:web
+```
+
+API only (http://localhost:4000):
+
+```bash
+npm run dev:api
+```
+
+### Environment variables
+
+Copy the example files and adjust if needed:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+```
+
 ## Current status
 
-Project folder structure has been created.
+v0.1 skeleton is in place.
 
-Next step: initialize Git, create the first commit, and then let Claude build the first minimal working Jarvis Core.
+- Next.js frontend running on http://localhost:3000
+- Express API running on http://localhost:4000
+- API health check wired into the dashboard status panel
+- Ollama integration is the next step

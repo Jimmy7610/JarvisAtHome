@@ -4,7 +4,7 @@
   "private": true,
   "description": "Local-first personal AI assistant using Ollama only.",
   "scripts": {
-    "dev": "echo \"Jarvis apps are not created yet. Next step: scaffold apps/web and apps/api.\"",
+    "dev": "concurrently --names \"api,web\" --prefix-colors \"cyan,blue\" \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "npm --workspace apps/web run dev",
     "dev:api": "npm --workspace apps/api run dev",
     "build": "npm run build --workspaces --if-present",
@@ -15,6 +15,9 @@
     "apps/*",
     "packages/*"
   ],
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
   "keywords": [
     "jarvis",
     "ollama",
