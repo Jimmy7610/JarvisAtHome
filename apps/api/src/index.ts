@@ -8,6 +8,7 @@ import "./services/db";
 import ollamaRouter from "./routes/ollama";
 import chatRouter from "./routes/chat";
 import sessionsRouter from "./routes/sessions";
+import filesRouter from "./routes/files";
 
 const app = express();
 
@@ -37,6 +38,10 @@ app.use("/chat", chatRouter);
 
 // Session and message persistence routes — mounted at /sessions
 app.use("/sessions", sessionsRouter);
+
+// Read-only file tool routes — mounted at /files
+// All operations sandboxed to config.allowedWorkspace
+app.use("/files", filesRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);

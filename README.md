@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.1)
+## What Jarvis can do right now (v0.2.1)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -15,6 +15,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Keyboard shortcut** — `Ctrl+Alt+N` creates a new chat from anywhere on the page.
 - **Ollama status panel** — shows whether Ollama is reachable and which models are available.
 - **System activity log** — live activity feed in the right panel.
+- **Read-only workspace file browser (v0.2.1)** — list and read text files from the `workspace/` sandbox directory. Path traversal protected. No writes.
 
 ## Prerequisites
 
@@ -129,7 +130,8 @@ This file is local-only and gitignored. It is created automatically on first API
 ## Current limitations
 
 - No RAG or semantic memory — Jarvis cannot search past conversations.
-- No file reading or editing.
+- File tools are read-only — no writes, edits, or deletes yet (v0.2.2+).
+- File browser shows workspace root only — no subdirectory navigation yet.
 - No voice input or output.
 - No smart home integration.
 - No cross-device sync — the SQLite database is local to one machine.

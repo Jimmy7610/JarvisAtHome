@@ -5,6 +5,7 @@ import StatusPanel from "@/components/StatusPanel";
 import ChatPanel from "@/components/ChatPanel";
 import ActivityPanel from "@/components/ActivityPanel";
 import SessionList, { type SessionRow } from "@/components/SessionList";
+import WorkspacePanel from "@/components/WorkspacePanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -254,9 +255,13 @@ export default function DashboardPage() {
         </section>
 
         {/* Right panel */}
-        <aside className="w-72 flex-shrink-0 flex flex-col">
+        <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden">
           <StatusPanel />
-          <ActivityPanel />
+          {/* ActivityPanel fixed height so WorkspacePanel gets remaining space */}
+          <div className="flex-none" style={{ height: "148px", overflow: "hidden" }}>
+            <ActivityPanel />
+          </div>
+          <WorkspacePanel />
         </aside>
       </main>
     </div>
