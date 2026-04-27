@@ -156,7 +156,10 @@ export default function DashboardPage() {
         {/* Chat area — ChatPanel remounts when activeSessionId changes (key prop) */}
         <section className="flex-1 flex flex-col border-r border-slate-800">
           {sessionReady && (
-            <ChatPanel key={activeSessionId ?? "new"} />
+            <ChatPanel
+              key={activeSessionId ?? "new"}
+              onSessionUpdated={() => void fetchSessions()}
+            />
           )}
         </section>
 

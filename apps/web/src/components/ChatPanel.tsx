@@ -194,7 +194,13 @@ async function loadSessionFromBackend(
   }
 }
 
-export default function ChatPanel() {
+export default function ChatPanel({
+  onSessionUpdated,
+}: {
+  // Called after a session title is successfully updated (e.g. auto-title after first message).
+  // Parent uses this to refresh the session list without reloading the page.
+  onSessionUpdated?: () => void;
+} = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
   // This two-phase pattern prevents Next.js hydration mismatches.
@@ -307,7 +313,9 @@ export default function ChatPanel() {
     if (sid !== null) {
       void persistMessage(sid, "user", trimmed);
       if (isFirstUserMessage) {
-        void updateSessionTitle(sid, trimmed.slice(0, 50));
+        void updateSessionTitle(sid, trimmed.slice(0, 50)).then(() => {
+          onSessionUpdated?.();
+        });
       }
     }
 
