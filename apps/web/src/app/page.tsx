@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import StatusPanel from "@/components/StatusPanel";
 import ChatPanel from "@/components/ChatPanel";
-import ActivityPanel from "@/components/ActivityPanel";
+import ActivityPanel, { type ActivityEvent } from "@/components/ActivityPanel";
 import SessionList, { type SessionRow } from "@/components/SessionList";
 import WorkspacePanel from "@/components/WorkspacePanel";
 
@@ -12,6 +12,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 // localStorage keys (mirrored from ChatPanel — do not change independently)
 const SESSION_KEY = "jarvis.session.v1";
 const CHAT_CACHE_KEY = "jarvis.chat.v1";
+
+// Initial activity events shown on page load (static — no SSR timestamp issues)
+const INITIAL_ACTIVITIES: ActivityEvent[] = [
+  { id: "init-3", time: "—", text: "Ollama status check active", type: "info" },
+  { id: "init-2", time: "—", text: "API health check triggered", type: "info" },
+  { id: "init-1", time: "—", text: "Dashboard loaded", type: "info" },
+];
 
 function readStoredSessionId(): number | null {
   try {
@@ -40,6 +47,22 @@ export default function DashboardPage() {
   const [sessionReady, setSessionReady] = useState(false);
   // Guards against key-repeat creating multiple sessions while Ctrl+Shift+N is held
   const isCreatingNewChatRef = useRef(false);
+
+  // Activity log — newest event first, capped at 50 entries
+  const [activities, setActivities] = useState<ActivityEvent[]>(INITIAL_ACTIVITIES);
+
+  function handleActivity(
+    text: string,
+    type: ActivityEvent["type"] = "info"
+  ): void {
+    const event: ActivityEvent = {
+      id: `${Date.now()}-${Math.random()}`,
+      time: new Date().toLocaleTimeString("en-US", { hour12: false }),
+      text,
+      type,
+    };
+    setActivities((prev) => [event, ...prev].slice(0, 50));
+  }
 
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
   const [attachment, setAttachment] = useState<{
@@ -297,11 +320,12 @@ export default function DashboardPage() {
           <StatusPanel />
           {/* ActivityPanel fixed height so WorkspacePanel gets remaining space */}
           <div className="flex-none" style={{ height: "148px", overflow: "hidden" }}>
-            <ActivityPanel />
+            <ActivityPanel events={activities} />
           </div>
           <WorkspacePanel
             onAttachFile={handleAttachFile}
             onAskAboutFile={handleAskAboutFile}
+            onActivity={handleActivity}
           />
         </aside>
       </main>
