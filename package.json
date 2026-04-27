@@ -1,0 +1,31 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first personal AI assistant using Ollama only.",
+  "scripts": {
+    "dev": "echo \"Jarvis apps are not created yet. Next step: scaffold apps/web and apps/api.\"",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "keywords": [
+    "jarvis",
+    "ollama",
+    "local-ai",
+    "assistant",
+    "typescript"
+  ],
+  "author": "Jimmy Eliasson",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}
