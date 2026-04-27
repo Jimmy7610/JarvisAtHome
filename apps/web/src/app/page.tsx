@@ -319,15 +319,21 @@ export default function DashboardPage() {
         {/* Right panel */}
         <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden">
           <StatusPanel />
-          {/* ActivityPanel fixed height so WorkspacePanel gets remaining space */}
-          <div className="flex-none" style={{ height: "200px", overflow: "hidden" }}>
+          {/* ActivityPanel — flex flex-col so ActivityPanel's own flex-1 root fills the
+              bounded height, which lets the inner overflow-y-auto list actually scroll */}
+          <div className="flex-none flex flex-col overflow-hidden" style={{ height: "240px" }}>
             <ActivityPanel events={activities} />
           </div>
-          <WorkspacePanel
-            onAttachFile={handleAttachFile}
-            onAskAboutFile={handleAskAboutFile}
-            onActivity={handleActivity}
-          />
+
+          {/* WorkspacePanel — flex-1 min-h-0 lets it fill remaining sidebar space
+              and shrink below its natural content height so it never overflows */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <WorkspacePanel
+              onAttachFile={handleAttachFile}
+              onAskAboutFile={handleAskAboutFile}
+              onActivity={handleActivity}
+            />
+          </div>
         </aside>
       </main>
     </div>

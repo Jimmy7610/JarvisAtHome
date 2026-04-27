@@ -398,7 +398,7 @@ export default function WorkspacePanel({
   const isAtRoot = currentPath === "";
 
   return (
-    <div className="flex flex-col overflow-hidden border-t border-slate-800">
+    <div className="flex flex-col h-full overflow-hidden border-t border-slate-800">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 flex-shrink-0 border-b border-slate-800">
         <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">

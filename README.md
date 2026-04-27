@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.2.1)
+## What Jarvis can do right now (v0.3.4)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -24,6 +24,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Write activity events (v0.3.1)** — propose, approve, cancel, and failure events from the write-with-approval flow now appear in the Activity Log panel with amber (write) or red (error) styling.
 - **Chat-created write proposals (v0.3.2)** — when the assistant response contains a `jarvis-write-proposal` fenced block, ChatPanel automatically creates a pending write proposal and shows a diff with Approve/Cancel buttons. Nothing is written until the user clicks "Approve write". All workspace safety rules still apply.
 - **Improved write proposal display and UI polish (v0.3.3)** — the raw fenced block in assistant messages is now replaced with a styled amber callout card showing the target path and a note to review the diff below. Chat input auto-grows with content (min 72px, max 200px). Activity Log cards have better padding and text wrapping.
+- **Write approval diff readability and cancel event (v0.3.4)** — the diff panel now has a fixed header showing the target path, a scrollable diff body with 2 px left border accents (green for added, red for removed, transparent for context), and context lines are brighter (`slate-400`). Cancelling a write proposal now emits an amber Activity Log event (was plain info).
 
 ## Prerequisites
 
