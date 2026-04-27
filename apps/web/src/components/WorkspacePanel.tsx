@@ -59,8 +59,12 @@ function buildBreadcrumbs(
 
 export default function WorkspacePanel({
   onAttachFile,
+  onAskAboutFile,
 }: {
   onAttachFile?: (path: string, content: string, size: number) => void;
+  // Attaches the file AND prefills a suggested question in the chat input.
+  // Nothing is sent automatically — user edits and presses Send.
+  onAskAboutFile?: (path: string, content: string, size: number) => void;
 } = {}) {
   // Currently browsed directory (relative path from workspace root; "" = root)
   const [currentPath, setCurrentPath] = useState("");
@@ -75,6 +79,8 @@ export default function WorkspacePanel({
   const [fileError, setFileError] = useState<string | null>(null);
   // true once the user has clicked "Attach to chat" for the currently previewed file
   const [attached, setAttached] = useState(false);
+  // true when "Ask Jarvis about this file" was used (shows a different confirmation)
+  const [asked, setAsked] = useState(false);
 
   // Reload the listing whenever the current directory changes
   useEffect(() => {
@@ -131,6 +137,7 @@ export default function WorkspacePanel({
     setFileError(null);
     setFileLoading(true);
     setAttached(false);
+    setAsked(false);
     try {
       const res = await fetch(
         `${API_URL}/files/read?path=${encodeURIComponent(filePath)}`
@@ -154,12 +161,20 @@ export default function WorkspacePanel({
     setFileContent(null);
     setFileError(null);
     setAttached(false);
+    setAsked(false);
   }
 
   function handleAttach(): void {
     if (!selectedPath || fileContent === null || !onAttachFile) return;
     onAttachFile(selectedPath, fileContent, selectedSize);
     setAttached(true);
+  }
+
+  function handleAsk(): void {
+    if (!selectedPath || fileContent === null || !onAskAboutFile) return;
+    onAskAboutFile(selectedPath, fileContent, selectedSize);
+    setAttached(true);
+    setAsked(true);
   }
 
   const breadcrumbs = buildBreadcrumbs(currentPath);
@@ -317,20 +332,36 @@ export default function WorkspacePanel({
             )}
           </div>
 
-          {/* Attach to chat button — only shown when file is loaded */}
-          {fileContent !== null && onAttachFile && (
-            <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60">
-              {attached ? (
+          {/* Action buttons — only shown when file content is loaded */}
+          {fileContent !== null && (onAttachFile || onAskAboutFile) && (
+            <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60 space-y-1.5">
+              {asked ? (
+                <p className="text-xs text-cyan-600 text-center">
+                  ✓ Queued — edit the question and press Send.
+                </p>
+              ) : attached ? (
                 <p className="text-xs text-cyan-600 text-center">
                   ✓ Attached — will be included in your next message
                 </p>
               ) : (
-                <button
-                  onClick={handleAttach}
-                  className="w-full text-xs py-1.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors"
-                >
-                  Attach to chat
-                </button>
+                <>
+                  {onAskAboutFile && (
+                    <button
+                      onClick={handleAsk}
+                      className="w-full text-xs py-1.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors"
+                    >
+                      Ask Jarvis about this file
+                    </button>
+                  )}
+                  {onAttachFile && (
+                    <button
+                      onClick={handleAttach}
+                      className="w-full text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors"
+                    >
+                      Attach to chat
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}

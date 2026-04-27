@@ -48,12 +48,31 @@ export default function DashboardPage() {
     size: number;
   } | null>(null);
 
+  // Prefilled chat input — set when the user clicks "Ask Jarvis about this file".
+  // ChatPanel consumes it once (via onConsumePrefill) so it never fires twice.
+  const [prefillInput, setPrefillInput] = useState<string | null>(null);
+
   function handleAttachFile(path: string, content: string, size: number): void {
     setAttachment({ path, content, size });
   }
 
   function handleClearAttachment(): void {
     setAttachment(null);
+  }
+
+  // Attaches the file AND queues a suggested question in the chat input.
+  // Nothing is sent automatically — the user edits and presses Send.
+  function handleAskAboutFile(
+    path: string,
+    content: string,
+    size: number
+  ): void {
+    setAttachment({ path, content, size });
+    setPrefillInput("Explain this file and suggest safe improvements.");
+  }
+
+  function handleConsumePrefill(): void {
+    setPrefillInput(null);
   }
 
   // Fetch the session list from the backend and update state
@@ -267,6 +286,8 @@ export default function DashboardPage() {
               onSessionUpdated={() => void fetchSessions()}
               attachment={attachment}
               onClearAttachment={handleClearAttachment}
+              prefillInput={prefillInput}
+              onConsumePrefill={handleConsumePrefill}
             />
           )}
         </section>
@@ -278,7 +299,10 @@ export default function DashboardPage() {
           <div className="flex-none" style={{ height: "148px", overflow: "hidden" }}>
             <ActivityPanel />
           </div>
-          <WorkspacePanel onAttachFile={handleAttachFile} />
+          <WorkspacePanel
+            onAttachFile={handleAttachFile}
+            onAskAboutFile={handleAskAboutFile}
+          />
         </aside>
       </main>
     </div>

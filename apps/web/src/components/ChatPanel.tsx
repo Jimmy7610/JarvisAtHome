@@ -198,6 +198,8 @@ export default function ChatPanel({
   onSessionUpdated,
   attachment,
   onClearAttachment,
+  prefillInput,
+  onConsumePrefill,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -206,6 +208,10 @@ export default function ChatPanel({
   attachment?: { path: string; content: string; size: number } | null;
   // Called by ChatPanel immediately when it consumes the attachment in send().
   onClearAttachment?: () => void;
+  // Suggested question set by "Ask Jarvis about this file". Applied once to the input field.
+  prefillInput?: string | null;
+  // Called after ChatPanel reads prefillInput so the parent can reset it to null.
+  onConsumePrefill?: () => void;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -281,6 +287,16 @@ export default function ChatPanel({
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  // Apply a prefilled question from "Ask Jarvis about this file".
+  // Runs once when prefillInput changes from null to a string, then the parent
+  // resets it to null via onConsumePrefill so it cannot fire twice.
+  useEffect(() => {
+    if (prefillInput) {
+      setInput(prefillInput);
+      onConsumePrefill?.();
+    }
+  }, [prefillInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearChat = () => {
     if (!window.confirm("Clear all chat history? This cannot be undone.")) return;
