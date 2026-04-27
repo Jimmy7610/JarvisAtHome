@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[JarvisBrain] Before reading source code, consult the wiki at C:\\Users\\Jimmy\\Documents\\GitHub\\JarvisBrain — start with index.md, then entities/, concepts/, maps/. This saves tokens and avoids re-discovering known architecture.\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[JarvisBrain] Consider reading C:\\Users\\Jimmy\\Documents\\GitHub\\JarvisBrain\\index.md before searching source files — the wiki may already answer your question.\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[JarvisBrain] Remember to update C:\\Users\\Jimmy\\Documents\\GitHub\\JarvisBrain\\log.md with a brief note about what changed, and update any affected entity/concept/map pages.\""
+          }
+        ]
+      }
+    ]
+  }
+}
