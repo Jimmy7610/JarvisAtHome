@@ -1,7 +1,10 @@
+// Load .env before any other imports so process.env is populated for config.ts
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { config } from "./config";
 import ollamaRouter from "./routes/ollama";
+import chatRouter from "./routes/chat";
 
 const app = express();
 
@@ -25,6 +28,9 @@ app.get("/health", (_req, res) => {
 
 // Ollama routes — mounted at /ollama
 app.use("/ollama", ollamaRouter);
+
+// Chat routes — mounted at /chat
+app.use("/chat", chatRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);

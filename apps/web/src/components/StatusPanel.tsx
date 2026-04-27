@@ -13,7 +13,8 @@ interface OllamaModel {
 interface OllamaData {
   ok: boolean;
   baseUrl: string;
-  defaultModel: string;
+  configuredDefaultModel: string;
+  resolvedDefaultModel: string | null;
   models: OllamaModel[];
   error?: string;
 }
@@ -68,11 +69,15 @@ export default function StatusPanel() {
 
   const ollamaDetail = ollamaData?.ok
     ? `${ollamaData.models.length} model${ollamaData.models.length !== 1 ? "s" : ""}`
-    : ollamaData?.error
-    ? "offline"
     : ollamaStatus === "checking"
     ? undefined
     : "offline";
+
+  // True when the configured model is missing but a fallback is being used
+  const usingFallback =
+    ollamaData?.ok &&
+    ollamaData.resolvedDefaultModel !== null &&
+    ollamaData.resolvedDefaultModel !== ollamaData.configuredDefaultModel;
 
   return (
     <div className="border-b border-slate-800 p-4">
@@ -98,13 +103,27 @@ export default function StatusPanel() {
       {/* Ollama detail block — only shown when Ollama is reachable */}
       {ollamaData?.ok && (
         <div className="mt-3 rounded border border-slate-700/60 bg-slate-800/40 p-3 space-y-2">
-          {/* Default model */}
+
+          {/* Active model row */}
           <div>
-            <p className="text-xs text-slate-500 mb-0.5">Default model</p>
+            <p className="text-xs text-slate-500 mb-0.5">Active model</p>
             <p className="text-xs font-mono text-cyan-400 truncate">
-              {ollamaData.defaultModel}
+              {ollamaData.resolvedDefaultModel ?? "—"}
             </p>
           </div>
+
+          {/* Fallback notice */}
+          {usingFallback && (
+            <div className="rounded bg-amber-900/20 border border-amber-700/40 px-2 py-1.5">
+              <p className="text-xs text-amber-300/80 leading-relaxed">
+                Configured model{" "}
+                <span className="font-mono">{ollamaData.configuredDefaultModel}</span>{" "}
+                is not installed. Using{" "}
+                <span className="font-mono">{ollamaData.resolvedDefaultModel}</span>{" "}
+                instead.
+              </p>
+            </div>
+          )}
 
           {/* Model list */}
           {ollamaData.models.length > 0 && (
@@ -118,8 +137,17 @@ export default function StatusPanel() {
                     key={m.name}
                     className="flex items-center justify-between gap-2"
                   >
-                    <span className="text-xs font-mono text-slate-300 truncate">
+                    <span
+                      className={`text-xs font-mono truncate ${
+                        m.name === ollamaData.resolvedDefaultModel
+                          ? "text-cyan-400"
+                          : "text-slate-300"
+                      }`}
+                    >
                       {m.name}
+                      {m.name === ollamaData.resolvedDefaultModel && (
+                        <span className="ml-1 text-slate-600">✓</span>
+                      )}
                     </span>
                     <span className="text-xs text-slate-600 flex-shrink-0">
                       {formatBytes(m.size)}

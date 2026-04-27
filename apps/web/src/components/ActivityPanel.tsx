@@ -3,7 +3,7 @@ export default function ActivityPanel() {
   const events = [
     { time: "now", text: "Dashboard loaded" },
     { time: "now", text: "API health check triggered" },
-    { time: "—", text: "Ollama: not connected (planned)" },
+    { time: "now", text: "Ollama status check active" },
   ];
 
   return (
