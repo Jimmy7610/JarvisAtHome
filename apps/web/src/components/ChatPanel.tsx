@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, FormEvent } from "react";
 
 interface ChatMessage {
-  role: "user" | "assistant" | "error";
+  role: "user" | "assistant" | "error" | "cancelled";
   text: string;
 }
 
@@ -56,12 +56,14 @@ function saveMessages(messages: ChatMessage[]): void {
 // Excludes:
 //   - the default UI greeting (not a real model response)
 //   - error bubbles
+//   - cancelled bubbles
 //   - empty assistant placeholders (mid-stream)
 // Returns the last HISTORY_LIMIT valid user/assistant turns.
 function buildHistory(messages: ChatMessage[]): HistoryMessage[] {
   return messages
     .filter((m) => m.text !== DEFAULT_GREETING.text)
     .filter((m) => m.role !== "error")
+    .filter((m) => m.role !== "cancelled")
     .filter((m) => !(m.role === "assistant" && m.text === ""))
     .filter((m): m is ChatMessage & { role: "user" | "assistant" } =>
       m.role === "user" || m.role === "assistant"
@@ -71,17 +73,27 @@ function buildHistory(messages: ChatMessage[]): HistoryMessage[] {
 }
 
 export default function ChatPanel() {
-  // Lazy initialiser: load from localStorage on first render, fall back to greeting
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const saved = loadMessages();
-    return saved && saved.length > 0 ? saved : [DEFAULT_GREETING];
-  });
+  // Start with the greeting on every render (matches server-rendered HTML).
+  // localStorage is loaded after mount in a useEffect below.
+  // This two-phase pattern prevents Next.js hydration mismatches.
+  const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_GREETING]);
   const [input, setInput] = useState("");
-  // loading: true from send until the stream ends (or errors)
+  // loading: true from send until the stream ends (or errors or is cancelled)
   const [loading, setLoading] = useState(false);
   // streaming: true once the first token has arrived (thinking dots hidden, text visible)
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Holds the active AbortController so the Stop button can cancel it
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Load saved chat history from localStorage after the component mounts.
+  // Must run after mount (not during render) to avoid server/client HTML mismatch.
+  useEffect(() => {
+    const saved = loadMessages();
+    if (saved && saved.length > 0) {
+      setMessages(saved);
+    }
+  }, []);
 
   // Persist to localStorage only when loading finishes, not on every token update.
   // This avoids dozens of writes per streaming response.
@@ -102,6 +114,11 @@ export default function ChatPanel() {
     setMessages([DEFAULT_GREETING]);
   };
 
+  // Cancel the active streaming request. Partial text is preserved.
+  const cancel = () => {
+    abortControllerRef.current?.abort();
+  };
+
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
@@ -116,11 +133,16 @@ export default function ChatPanel() {
     setLoading(true);
     setStreaming(false);
 
+    // Create a fresh AbortController for this request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed, history }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -191,6 +213,24 @@ export default function ChatPanel() {
         });
       }
     } catch (err: unknown) {
+      // User-initiated abort — not an error
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          // Only replace the bubble if no text arrived yet — otherwise keep partial text
+          if (last.role === "assistant" && last.text === "") {
+            updated[updated.length - 1] = {
+              role: "cancelled",
+              text: "Response cancelled.",
+            };
+          }
+          return updated;
+        });
+        return;
+      }
+
+      // Real network or API error — show error bubble
       const msg =
         err instanceof Error
           ? err.message
@@ -208,6 +248,7 @@ export default function ChatPanel() {
         return updated;
       });
     } finally {
+      abortControllerRef.current = null;
       setLoading(false);
       setStreaming(false);
     }
@@ -255,6 +296,7 @@ export default function ChatPanel() {
         {messages.map((msg, i) => {
           if (msg.role === "user") return <UserMessage key={i} text={msg.text} />;
           if (msg.role === "error") return <ErrorMessage key={i} text={msg.text} />;
+          if (msg.role === "cancelled") return <CancelledMessage key={i} />;
           // Show a blinking cursor on the last assistant message while streaming
           const isLast = i === messages.length - 1;
           return (
@@ -296,6 +338,22 @@ export default function ChatPanel() {
             disabled={loading}
             className="flex-1 resize-none rounded-lg bg-slate-800/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           />
+
+          {/* Stop button — always rendered to prevent layout shift; invisible when idle */}
+          <button
+            type="button"
+            onClick={cancel}
+            aria-label="Stop response"
+            className={`px-4 py-3 rounded-lg text-sm font-medium border transition-colors
+              ${
+                loading
+                  ? "bg-slate-700/60 text-slate-300 border-slate-600/60 hover:bg-slate-700 hover:text-slate-100"
+                  : "invisible pointer-events-none"
+              }`}
+          >
+            Stop
+          </button>
+
           <button
             type="submit"
             disabled={loading || input.trim() === ""}
@@ -333,6 +391,21 @@ function AssistantMessage({
             <span className="inline-block w-0.5 h-3.5 bg-cyan-400 ml-0.5 align-middle animate-pulse" />
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Shown when the user cancelled a response before it fully arrived.
+// Subtle — not a red error, just a muted note.
+function CancelledMessage() {
+  return (
+    <div className="flex gap-3">
+      <div className="w-8 h-8 rounded-full bg-slate-800/60 border border-slate-700/40 flex items-center justify-center flex-shrink-0 text-slate-600 text-xs select-none">
+        ◼
+      </div>
+      <div className="flex-1 flex items-center">
+        <span className="text-xs text-slate-600 italic">Response cancelled.</span>
       </div>
     </div>
   );
