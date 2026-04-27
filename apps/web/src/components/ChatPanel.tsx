@@ -151,6 +151,23 @@ async function persistMessage(
   }
 }
 
+// Fire-and-forget: update session title via PATCH /sessions/:id.
+// Used to auto-title a session from the first user message.
+async function updateSessionTitle(
+  sessionId: number,
+  title: string
+): Promise<void> {
+  try {
+    await fetch(`${API_URL}/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+  } catch {
+    // Not critical — ignore silently
+  }
+}
+
 // Load chat history from the backend for a given session.
 // Returns the mapped messages on success, null if the backend is unreachable, the session
 // is gone, or the session has no messages yet.
@@ -246,6 +263,13 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Abort any in-flight streaming request when the component unmounts (e.g. session switch).
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   const clearChat = () => {
     if (!window.confirm("Clear all chat history? This cannot be undone.")) return;
     localStorage.removeItem(STORAGE_KEY);
@@ -264,6 +288,8 @@ export default function ChatPanel() {
 
     // Capture history from current messages before the new user turn is added
     const history = buildHistory(messages);
+    // Detect first user message so we can auto-title the session afterwards
+    const isFirstUserMessage = !messages.some((m) => m.role === "user");
 
     // Show user message immediately
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
@@ -277,9 +303,12 @@ export default function ChatPanel() {
 
     // Snapshot the session id before any await so it stays consistent for this send
     const sid = sessionIdRef.current;
-    // Persist user message to backend immediately (fire-and-forget)
+    // Persist user message and, on the first message, auto-title the session
     if (sid !== null) {
       void persistMessage(sid, "user", trimmed);
+      if (isFirstUserMessage) {
+        void updateSessionTitle(sid, trimmed.slice(0, 50));
+      }
     }
 
     // Track accumulated assistant text and model locally for persistence after streaming

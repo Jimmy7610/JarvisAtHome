@@ -173,4 +173,39 @@ router.post("/:id/messages", (req: Request, res: Response) => {
   res.json({ ok: true, message });
 });
 
+// PATCH /sessions/:id
+// Updates the session title (used for auto-titling from the first user message).
+// Body: { "title": "string" }
+// Returns: { ok: true, session: { id, title, created_at, updated_at } }
+router.patch("/:id", (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.json({ ok: false, error: "Invalid session id." });
+    return;
+  }
+
+  const { title } = req.body as { title?: unknown };
+  if (typeof title !== "string" || title.trim() === "") {
+    res.json({ ok: false, error: "title must be a non-empty string." });
+    return;
+  }
+  const safeTitle = title.trim().slice(0, 80);
+
+  const session = db
+    .prepare(
+      `UPDATE chat_sessions
+       SET title = ?, updated_at = datetime('now')
+       WHERE id = ?
+       RETURNING id, title, created_at, updated_at`
+    )
+    .get(safeTitle, id) as SessionRow | undefined;
+
+  if (!session) {
+    res.json({ ok: false, error: "Session not found." });
+    return;
+  }
+
+  res.json({ ok: true, session });
+});
+
 export default router;
