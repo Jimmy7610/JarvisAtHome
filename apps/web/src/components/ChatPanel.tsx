@@ -196,10 +196,16 @@ async function loadSessionFromBackend(
 
 export default function ChatPanel({
   onSessionUpdated,
+  attachment,
+  onClearAttachment,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
   onSessionUpdated?: () => void;
+  // File attached via WorkspacePanel — prepended to the next outgoing message.
+  attachment?: { path: string; content: string; size: number } | null;
+  // Called by ChatPanel immediately when it consumes the attachment in send().
+  onClearAttachment?: () => void;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -292,13 +298,28 @@ export default function ChatPanel({
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
+    // Snapshot and immediately clear the attachment so it cannot be sent twice
+    const attachmentSnapshot = attachment ?? null;
+    onClearAttachment?.();
+
     // Capture history from current messages before the new user turn is added
     const history = buildHistory(messages);
     // Detect first user message so we can auto-title the session afterwards
     const isFirstUserMessage = !messages.some((m) => m.role === "user");
 
-    // Show user message immediately
-    setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+    // Build the text shown in the UI bubble — typed message plus a small attachment label
+    const bubbleText = attachmentSnapshot
+      ? `${trimmed}\n\n[Attached: ${attachmentSnapshot.path}]`
+      : trimmed;
+
+    // Build the API message — includes file content in a fenced block when a file is attached
+    const fence = "```";
+    const apiMessage = attachmentSnapshot
+      ? `The user attached the following read-only workspace file:\n\nFile: ${attachmentSnapshot.path}\n\n${fence}\n${attachmentSnapshot.content}\n${fence}\n\n${trimmed}`
+      : trimmed;
+
+    // Show user message immediately (bubble shows typed text + attachment label, not file content)
+    setMessages((prev) => [...prev, { role: "user", text: bubbleText }]);
     setInput("");
     setLoading(true);
     setStreaming(false);
@@ -309,9 +330,9 @@ export default function ChatPanel({
 
     // Snapshot the session id before any await so it stays consistent for this send
     const sid = sessionIdRef.current;
-    // Persist user message and, on the first message, auto-title the session
+    // Persist the composed API message (includes file content) and auto-title if first message
     if (sid !== null) {
-      void persistMessage(sid, "user", trimmed);
+      void persistMessage(sid, "user", apiMessage);
       if (isFirstUserMessage) {
         void updateSessionTitle(sid, trimmed.slice(0, 50)).then(() => {
           onSessionUpdated?.();
@@ -327,7 +348,7 @@ export default function ChatPanel({
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed, history }),
+        body: JSON.stringify({ message: apiMessage, history }),
         signal: controller.signal,
       });
 
@@ -542,6 +563,23 @@ export default function ChatPanel({
 
       {/* Input bar */}
       <form onSubmit={send} className="px-6 py-4 border-t border-slate-800">
+        {/* Attachment pill — shown when a workspace file is queued for the next message */}
+        {attachment && (
+          <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs">
+            <span className="text-cyan-400 truncate">
+              Attached: <span className="font-medium">{attachment.path}</span>
+              <span className="text-cyan-600 ml-1">· Read-only · will be included in next message</span>
+            </span>
+            <button
+              type="button"
+              onClick={onClearAttachment}
+              className="flex-shrink-0 text-cyan-700 hover:text-cyan-400 leading-none"
+              aria-label="Remove attachment"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="flex gap-3 items-end">
           <textarea
             rows={1}

@@ -37,15 +37,22 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-export default function WorkspacePanel() {
+export default function WorkspacePanel({
+  onAttachFile,
+}: {
+  onAttachFile?: (path: string, content: string, size: number) => void;
+} = {}) {
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedSize, setSelectedSize] = useState<number>(0);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  // true once the user has clicked "Attach to chat" for the currently previewed file
+  const [attached, setAttached] = useState(false);
 
   // Load root listing on mount
   useEffect(() => {
@@ -72,9 +79,11 @@ export default function WorkspacePanel() {
 
   async function handleSelectFile(filePath: string): Promise<void> {
     setSelectedPath(filePath);
+    setSelectedSize(0);
     setFileContent(null);
     setFileError(null);
     setFileLoading(true);
+    setAttached(false);
     try {
       const res = await fetch(
         `${API_URL}/files/read?path=${encodeURIComponent(filePath)}`
@@ -85,6 +94,7 @@ export default function WorkspacePanel() {
         return;
       }
       setFileContent(data.content ?? "");
+      setSelectedSize(data.size ?? 0);
     } catch {
       setFileError("API unreachable.");
     } finally {
@@ -96,6 +106,13 @@ export default function WorkspacePanel() {
     setSelectedPath(null);
     setFileContent(null);
     setFileError(null);
+    setAttached(false);
+  }
+
+  function handleAttach(): void {
+    if (!selectedPath || fileContent === null || !onAttachFile) return;
+    onAttachFile(selectedPath, fileContent, selectedSize);
+    setAttached(true);
   }
 
   return (
@@ -201,6 +218,24 @@ export default function WorkspacePanel() {
               </pre>
             )}
           </div>
+
+          {/* Attach to chat button — only shown when file is loaded */}
+          {fileContent !== null && onAttachFile && (
+            <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60">
+              {attached ? (
+                <p className="text-xs text-cyan-600 text-center">
+                  ✓ Attached — will be included in your next message
+                </p>
+              ) : (
+                <button
+                  onClick={handleAttach}
+                  className="w-full text-xs py-1.5 rounded bg-cyan-500/10 text-cyan-500 border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors"
+                >
+                  Attach to chat
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

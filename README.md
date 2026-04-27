@@ -16,6 +16,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Ollama status panel** — shows whether Ollama is reachable and which models are available.
 - **System activity log** — live activity feed in the right panel.
 - **Read-only workspace file browser (v0.2.1)** — list and read text files from the `workspace/` sandbox directory. Path traversal protected. No writes.
+- **Attach file to chat (v0.2.2)** — click "Attach to chat" on a previewed file to include its content in your next message. File content is prepended to the API request in a labelled fenced block. Attachment clears after send. No autonomous LLM file access.
 
 ## Prerequisites
 
@@ -130,8 +131,9 @@ This file is local-only and gitignored. It is created automatically on first API
 ## Current limitations
 
 - No RAG or semantic memory — Jarvis cannot search past conversations.
-- File tools are read-only — no writes, edits, or deletes yet (v0.2.2+).
-- File browser shows workspace root only — no subdirectory navigation yet.
+- File tools are read-only — no writes, edits, or deletes yet (v0.2.3+).
+- File browser shows workspace root only — no subdirectory navigation yet (v0.2.3+).
+- Only one file can be attached per message — attaching a second replaces the first.
 - No voice input or output.
 - No smart home integration.
 - No cross-device sync — the SQLite database is local to one machine.

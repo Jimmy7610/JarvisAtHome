@@ -41,6 +41,21 @@ export default function DashboardPage() {
   // Guards against key-repeat creating multiple sessions while Ctrl+Shift+N is held
   const isCreatingNewChatRef = useRef(false);
 
+  // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
+  const [attachment, setAttachment] = useState<{
+    path: string;
+    content: string;
+    size: number;
+  } | null>(null);
+
+  function handleAttachFile(path: string, content: string, size: number): void {
+    setAttachment({ path, content, size });
+  }
+
+  function handleClearAttachment(): void {
+    setAttachment(null);
+  }
+
   // Fetch the session list from the backend and update state
   async function fetchSessions(): Promise<void> {
     try {
@@ -250,6 +265,8 @@ export default function DashboardPage() {
             <ChatPanel
               key={activeSessionId ?? "new"}
               onSessionUpdated={() => void fetchSessions()}
+              attachment={attachment}
+              onClearAttachment={handleClearAttachment}
             />
           )}
         </section>
@@ -261,7 +278,7 @@ export default function DashboardPage() {
           <div className="flex-none" style={{ height: "148px", overflow: "hidden" }}>
             <ActivityPanel />
           </div>
-          <WorkspacePanel />
+          <WorkspacePanel onAttachFile={handleAttachFile} />
         </aside>
       </main>
     </div>
