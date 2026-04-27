@@ -1,34 +1,45 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
-type ApiStatus = "checking" | "online" | "offline";
+type SimpleStatus = "checking" | "online" | "offline";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+interface OllamaModel {
+  name: string;
+  size: number;
+  modified_at: string;
+}
+
+interface OllamaData {
+  ok: boolean;
+  baseUrl: string;
+  defaultModel: string;
+  models: OllamaModel[];
+  error?: string;
+}
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+// Format byte count as a readable size string
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`;
+  return `${bytes} B`;
+}
 
 export default function StatusPanel() {
-  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [apiStatus, setApiStatus] = useState<SimpleStatus>("checking");
   const [apiVersion, setApiVersion] = useState<string | null>(null);
+  const [ollamaData, setOllamaData] = useState<OllamaData | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<SimpleStatus>("checking");
 
-  // Check the API health endpoint once on mount
-  useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) {
-          setApiStatus("online");
-          setApiVersion(data.version ?? null);
-        } else {
-          setApiStatus("offline");
-        }
-      })
-      .catch(() => setApiStatus("offline"));
-  }, []);
-
-  const recheck = () => {
+  const fetchAll = useCallback(() => {
     setApiStatus("checking");
     setApiVersion(null);
+    setOllamaStatus("checking");
+    setOllamaData(null);
+
+    // Check API health
     fetch(`${API_URL}/health`)
       .then((r) => r.json())
       .then((data) => {
@@ -36,7 +47,32 @@ export default function StatusPanel() {
         setApiVersion(data.version ?? null);
       })
       .catch(() => setApiStatus("offline"));
-  };
+
+    // Check Ollama status via API proxy
+    fetch(`${API_URL}/ollama/status`)
+      .then((r) => r.json())
+      .then((data: OllamaData) => {
+        setOllamaData(data);
+        setOllamaStatus(data.ok ? "online" : "offline");
+      })
+      .catch(() => {
+        setOllamaStatus("offline");
+        setOllamaData(null);
+      });
+  }, []);
+
+  // Run checks on mount
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const ollamaDetail = ollamaData?.ok
+    ? `${ollamaData.models.length} model${ollamaData.models.length !== 1 ? "s" : ""}`
+    : ollamaData?.error
+    ? "offline"
+    : ollamaStatus === "checking"
+    ? undefined
+    : "offline";
 
   return (
     <div className="border-b border-slate-800 p-4">
@@ -44,6 +80,7 @@ export default function StatusPanel() {
         System Status
       </h2>
 
+      {/* Top-level status rows */}
       <div className="space-y-2">
         <StatusRow label="Frontend" status="online" detail="Next.js" />
         <StatusRow
@@ -51,11 +88,59 @@ export default function StatusPanel() {
           status={apiStatus}
           detail={apiVersion ? `v${apiVersion}` : undefined}
         />
-        <StatusRow label="Ollama" status="planned" detail="not connected" />
+        <StatusRow
+          label="Ollama"
+          status={ollamaStatus}
+          detail={ollamaDetail}
+        />
       </div>
 
+      {/* Ollama detail block — only shown when Ollama is reachable */}
+      {ollamaData?.ok && (
+        <div className="mt-3 rounded border border-slate-700/60 bg-slate-800/40 p-3 space-y-2">
+          {/* Default model */}
+          <div>
+            <p className="text-xs text-slate-500 mb-0.5">Default model</p>
+            <p className="text-xs font-mono text-cyan-400 truncate">
+              {ollamaData.defaultModel}
+            </p>
+          </div>
+
+          {/* Model list */}
+          {ollamaData.models.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-1">
+                Available ({ollamaData.models.length})
+              </p>
+              <ul className="space-y-1">
+                {ollamaData.models.map((m) => (
+                  <li
+                    key={m.name}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="text-xs font-mono text-slate-300 truncate">
+                      {m.name}
+                    </span>
+                    <span className="text-xs text-slate-600 flex-shrink-0">
+                      {formatBytes(m.size)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error message when Ollama is offline */}
+      {ollamaData && !ollamaData.ok && ollamaData.error && (
+        <p className="mt-2 text-xs text-red-400/70 leading-relaxed">
+          {ollamaData.error}
+        </p>
+      )}
+
       <button
-        onClick={recheck}
+        onClick={fetchAll}
         className="mt-3 w-full text-xs py-1.5 rounded border border-slate-700 text-slate-400 hover:border-cyan-500/50 hover:text-cyan-400 transition-colors"
       >
         Re-check status
@@ -70,21 +155,19 @@ function StatusRow({
   detail,
 }: {
   label: string;
-  status: ApiStatus | "planned";
+  status: SimpleStatus;
   detail?: string;
 }) {
-  const dot: Record<typeof status, string> = {
+  const dot: Record<SimpleStatus, string> = {
     online: "bg-emerald-400",
     offline: "bg-red-500",
     checking: "bg-amber-400 animate-pulse",
-    planned: "bg-slate-600",
   };
 
-  const text: Record<typeof status, string> = {
+  const text: Record<SimpleStatus, string> = {
     online: "text-emerald-400",
     offline: "text-red-400",
     checking: "text-amber-400",
-    planned: "text-slate-500",
   };
 
   return (

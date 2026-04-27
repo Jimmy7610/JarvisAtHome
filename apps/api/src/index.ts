@@ -1,11 +1,12 @@
 import express from "express";
 import cors from "cors";
+import { config } from "./config";
+import ollamaRouter from "./routes/ollama";
 
 const app = express();
-const PORT = process.env.PORT || 4000;
 
 // Allow requests from the Next.js frontend
-app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:3000" }));
+app.use(cors({ origin: config.corsOrigin }));
 app.use(express.json());
 
 // Root route
@@ -22,6 +23,9 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Jarvis API running on http://localhost:${PORT}`);
+// Ollama routes — mounted at /ollama
+app.use("/ollama", ollamaRouter);
+
+app.listen(config.port, () => {
+  console.log(`Jarvis API running on http://localhost:${config.port}`);
 });
