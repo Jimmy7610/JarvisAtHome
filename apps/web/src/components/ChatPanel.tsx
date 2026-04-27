@@ -7,6 +7,12 @@ interface ChatMessage {
   text: string;
 }
 
+// Shape expected by the API history field
+interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 // localStorage key for chat history
@@ -16,6 +22,9 @@ const DEFAULT_GREETING: ChatMessage = {
   role: "assistant",
   text: "Hello. I am Jarvis — your local AI assistant. Type a message below to get started.",
 };
+
+// Maximum number of history turns to send to the API
+const HISTORY_LIMIT = 12;
 
 // Read saved messages from localStorage.
 // Returns null if localStorage is unavailable (SSR) or the stored value is invalid.
@@ -41,6 +50,24 @@ function saveMessages(messages: ChatMessage[]): void {
   } catch {
     // Storage quota exceeded or blocked — not fatal, just skip saving
   }
+}
+
+// Build the history array to send to the API from the current message list.
+// Excludes:
+//   - the default UI greeting (not a real model response)
+//   - error bubbles
+//   - empty assistant placeholders (mid-stream)
+// Returns the last HISTORY_LIMIT valid user/assistant turns.
+function buildHistory(messages: ChatMessage[]): HistoryMessage[] {
+  return messages
+    .filter((m) => m.text !== DEFAULT_GREETING.text)
+    .filter((m) => m.role !== "error")
+    .filter((m) => !(m.role === "assistant" && m.text === ""))
+    .filter((m): m is ChatMessage & { role: "user" | "assistant" } =>
+      m.role === "user" || m.role === "assistant"
+    )
+    .map((m) => ({ role: m.role, content: m.text }))
+    .slice(-HISTORY_LIMIT);
 }
 
 export default function ChatPanel() {
@@ -80,6 +107,9 @@ export default function ChatPanel() {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
+    // Capture history from current messages before the new user turn is added
+    const history = buildHistory(messages);
+
     // Show user message immediately
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setInput("");
@@ -90,7 +120,7 @@ export default function ChatPanel() {
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({ message: trimmed, history }),
       });
 
       if (!res.ok || !res.body) {
@@ -104,6 +134,8 @@ export default function ChatPanel() {
       const decoder = new TextDecoder();
       let buffer = "";
       let errorText: string | null = null;
+      // Local flag avoids relying on stale closure value of `streaming` state
+      let firstTokenReceived = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -124,8 +156,11 @@ export default function ChatPanel() {
             | { type: "error"; error: string };
 
           if (chunk.type === "token") {
-            // Show the bubble instead of thinking dots on the first token
-            if (!streaming) setStreaming(true);
+            // Switch from thinking dots to growing text bubble on the first token
+            if (!firstTokenReceived) {
+              firstTokenReceived = true;
+              setStreaming(true);
+            }
 
             // Append token to the last message in-place
             setMessages((prev) => {
@@ -149,7 +184,6 @@ export default function ChatPanel() {
         setMessages((prev) => {
           const updated = [...prev];
           const last = updated[updated.length - 1];
-          // If we received no tokens yet the bubble is empty — replace it
           if (last.role === "assistant" && last.text === "") {
             updated[updated.length - 1] = { role: "error", text: errorText! };
           }
@@ -190,6 +224,9 @@ export default function ChatPanel() {
   // Show thinking dots only while loading and before the first token arrives
   const showThinking = loading && !streaming;
 
+  // Context count shown in the header — computed from the current message list
+  const contextCount = buildHistory(messages).length;
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -197,7 +234,10 @@ export default function ChatPanel() {
         <div>
           <h2 className="text-sm font-semibold text-slate-200">Chat</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Streaming · Ollama · local only
+            Streaming · Ollama ·{" "}
+            <span className="text-slate-600">
+              context: {contextCount} msg{contextCount !== 1 ? "s" : ""}
+            </span>
           </p>
         </div>
         <button

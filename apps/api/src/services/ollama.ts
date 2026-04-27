@@ -23,6 +23,26 @@ export interface OllamaModel {
   modified_at: string;
 }
 
+// A single message in the Ollama messages array
+export interface OllamaMessage {
+  role: string;
+  content: string;
+}
+
+// Build the full messages array to send to Ollama.
+// Order: system prompt → validated history → current user message.
+export function buildMessages(
+  systemPrompt: string,
+  history: OllamaMessage[],
+  userMessage: string
+): OllamaMessage[] {
+  return [
+    { role: "system", content: systemPrompt },
+    ...history,
+    { role: "user", content: userMessage },
+  ];
+}
+
 // Fetch the list of installed models from Ollama.
 // Throws if Ollama is unreachable or returns a non-200 status.
 export async function getOllamaModels(): Promise<OllamaModel[]> {
@@ -78,12 +98,12 @@ export function resolveModel(
   return installedNames[0];
 }
 
-// Send a single-turn message to Ollama and return the full assistant response text.
+// Send a conversation to Ollama and return the full assistant response text.
+// `messages` must already be fully built (system + history + user turn).
 // Throws on network error, non-200 response, or empty reply.
 export async function callOllamaChat(
   model: string,
-  userMessage: string,
-  systemPrompt: string
+  messages: OllamaMessage[]
 ): Promise<string> {
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
@@ -91,10 +111,7 @@ export async function callOllamaChat(
     body: JSON.stringify({
       model,
       stream: false,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
+      messages,
     }),
     // 60 s — first-token latency on large models can be significant
     signal: AbortSignal.timeout(60_000),
@@ -120,13 +137,13 @@ export async function callOllamaChat(
   return content;
 }
 
-// Stream a single-turn message to Ollama, yielding content tokens as they arrive.
+// Stream a conversation to Ollama, yielding content tokens as they arrive.
+// `messages` must already be fully built (system + history + user turn).
 // The caller is responsible for writing tokens to the HTTP response.
 // Throws if Ollama is unreachable or returns a non-200 status.
 export async function* streamOllamaChat(
   model: string,
-  userMessage: string,
-  systemPrompt: string
+  messages: OllamaMessage[]
 ): AsyncGenerator<string> {
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
@@ -134,10 +151,7 @@ export async function* streamOllamaChat(
     body: JSON.stringify({
       model,
       stream: true,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
+      messages,
     }),
     // Generous timeout for streaming — long responses can take several minutes
     signal: AbortSignal.timeout(300_000),
