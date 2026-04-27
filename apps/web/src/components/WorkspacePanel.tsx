@@ -32,6 +32,62 @@ type ReadResponse = {
   error?: string;
 };
 
+// ─── Write proposal types (mirrors backend writeTools.ts) ─────────────────────
+
+type DiffLine = {
+  type: "unchanged" | "added" | "removed";
+  content: string;
+};
+
+type Proposal = {
+  id: string;
+  path: string;
+  diff: DiffLine[];
+};
+
+// A display line is either a diff line or a collapsed-context gap indicator
+type DisplayLine =
+  | DiffLine
+  | { type: "gap"; count: number };
+
+// Collapse long unchanged sections to at most CONTEXT lines on each side of a change.
+const DIFF_CONTEXT = 5;
+
+function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
+  const firstChange = diff.findIndex((l) => l.type !== "unchanged");
+  if (firstChange === -1) {
+    // No changes — show up to the last CONTEXT lines with a gap above
+    if (diff.length <= DIFF_CONTEXT) return [...diff];
+    return [
+      { type: "gap", count: diff.length - DIFF_CONTEXT },
+      ...diff.slice(diff.length - DIFF_CONTEXT),
+    ];
+  }
+
+  const lastChange =
+    diff.length -
+    1 -
+    [...diff].reverse().findIndex((l) => l.type !== "unchanged");
+
+  const result: DisplayLine[] = [];
+
+  // Leading context (up to CONTEXT lines before first change)
+  const leadStart = Math.max(0, firstChange - DIFF_CONTEXT);
+  if (leadStart > 0) result.push({ type: "gap", count: leadStart });
+  for (let i = leadStart; i < firstChange; i++) result.push(diff[i]);
+
+  // All changed lines
+  for (let i = firstChange; i <= lastChange; i++) result.push(diff[i]);
+
+  // Trailing context (up to CONTEXT lines after last change)
+  const trailEnd = Math.min(diff.length - 1, lastChange + DIFF_CONTEXT);
+  for (let i = lastChange + 1; i <= trailEnd; i++) result.push(diff[i]);
+  if (trailEnd < diff.length - 1)
+    result.push({ type: "gap", count: diff.length - 1 - trailEnd });
+
+  return result;
+}
+
 // Format a byte count as a compact human-readable string
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -82,6 +138,15 @@ export default function WorkspacePanel({
   const [attached, setAttached] = useState(false);
   // true when "Ask Jarvis about this file" was used (shows a different confirmation)
   const [asked, setAsked] = useState(false);
+
+  // ── Write proposal state ────────────────────────────────────────────────────
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [proposalLoading, setProposalLoading] = useState(false);
+  const [proposalError, setProposalError] = useState<string | null>(null);
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  // true after a successful write — cleared on file switch or preview close
+  const [writeSuccess, setWriteSuccess] = useState(false);
 
   // Reload the listing whenever the current directory changes
   useEffect(() => {
@@ -156,6 +221,11 @@ export default function WorkspacePanel({
     setFileLoading(true);
     setAttached(false);
     setAsked(false);
+    // Clear proposal state when switching to a different file
+    setProposal(null);
+    setProposalError(null);
+    setApproveError(null);
+    setWriteSuccess(false);
     try {
       const res = await fetch(
         `${API_URL}/files/read?path=${encodeURIComponent(filePath)}`
@@ -180,6 +250,10 @@ export default function WorkspacePanel({
     setFileError(null);
     setAttached(false);
     setAsked(false);
+    setProposal(null);
+    setProposalError(null);
+    setApproveError(null);
+    setWriteSuccess(false);
   }
 
   function handleAttach(): void {
@@ -193,6 +267,100 @@ export default function WorkspacePanel({
     onAskAboutFile(selectedPath, fileContent, selectedSize);
     setAttached(true);
     setAsked(true);
+  }
+
+  // ── Write proposal handlers ─────────────────────────────────────────────────
+
+  async function handleProposeEdit(): Promise<void> {
+    if (!selectedPath || fileContent === null) return;
+    setProposalLoading(true);
+    setProposalError(null);
+    setWriteSuccess(false);
+
+    // v0.3.0 test edit: append a safe reviewer comment to the file
+    const proposedContent =
+      fileContent + "\n\n<!-- Proposed by Jarvis: review before keeping. -->\n";
+
+    try {
+      const res = await fetch(`${API_URL}/files/propose-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedPath, content: proposedContent }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        id?: string;
+        path?: string;
+        diff?: DiffLine[];
+        error?: string;
+      };
+      if (!data.ok || !data.id || !data.diff) {
+        setProposalError(data.error ?? "Failed to create proposal.");
+        return;
+      }
+      setProposal({ id: data.id, path: data.path ?? selectedPath, diff: data.diff });
+    } catch {
+      setProposalError("API unreachable — is the Jarvis API running?");
+    } finally {
+      setProposalLoading(false);
+    }
+  }
+
+  async function handleApprove(): Promise<void> {
+    if (!proposal || !selectedPath) return;
+    setApproveLoading(true);
+    setApproveError(null);
+
+    try {
+      const res = await fetch(`${API_URL}/files/approve-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposalId: proposal.id }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        path?: string;
+        written?: boolean;
+        error?: string;
+      };
+      if (!data.ok) {
+        setApproveError(data.error ?? "Failed to approve write.");
+        return;
+      }
+
+      // Clear proposal and show success, then reload the file content in-place
+      setProposal(null);
+      setWriteSuccess(true);
+      setAttached(false);
+      setAsked(false);
+
+      // Reload the file content without resetting other state
+      const reloadRes = await fetch(
+        `${API_URL}/files/read?path=${encodeURIComponent(selectedPath)}`
+      );
+      const reloadData = (await reloadRes.json()) as {
+        ok: boolean;
+        content?: string;
+        size?: number;
+      };
+      if (reloadData.ok) {
+        setFileContent(reloadData.content ?? "");
+        setSelectedSize(reloadData.size ?? 0);
+      }
+
+      // Refresh directory listing so the updated file size is shown
+      void fetchList(currentPath);
+    } catch {
+      setApproveError("API unreachable — is the Jarvis API running?");
+    } finally {
+      setApproveLoading(false);
+    }
+  }
+
+  function handleCancelProposal(): void {
+    setProposal(null);
+    setProposalError(null);
+    setApproveError(null);
   }
 
   const breadcrumbs = buildBreadcrumbs(currentPath);
@@ -326,9 +494,9 @@ export default function WorkspacePanel({
       {selectedPath && (
         <div
           className="flex flex-col border-t border-slate-800 flex-shrink-0"
-          style={{ maxHeight: "160px" }}
+          style={{ maxHeight: proposal ? "260px" : "180px" }}
         >
-          {/* Preview header */}
+          {/* Preview header — always visible */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 flex-shrink-0">
             <span
               className="text-xs text-slate-500 truncate"
@@ -345,55 +513,172 @@ export default function WorkspacePanel({
             </button>
           </div>
 
-          {/* Preview content */}
-          <div className="overflow-y-auto px-3 py-2 flex-1">
-            {fileLoading && (
-              <p className="text-xs text-slate-600">Loading…</p>
-            )}
-            {fileError && (
-              <p className="text-xs text-red-500/70 leading-relaxed">
-                {fileError}
-              </p>
-            )}
-            {fileContent !== null && (
-              <pre className="text-xs text-slate-400 whitespace-pre-wrap break-words font-mono leading-relaxed">
-                {fileContent}
-              </pre>
-            )}
-          </div>
+          {proposal ? (
+            /* ── Proposal diff view ─────────────────────────────────────── */
+            <>
+              {/* Warning banner */}
+              <div className="flex-shrink-0 px-3 py-2 bg-amber-900/10 border-b border-amber-500/20">
+                <p className="text-xs text-amber-400 font-medium">
+                  Pending write approval
+                </p>
+                <p className="text-xs text-amber-700">
+                  Nothing has been written yet.
+                </p>
+              </div>
 
-          {/* Action buttons — only shown when file content is loaded */}
-          {fileContent !== null && (onAttachFile || onAskAboutFile) && (
-            <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60 space-y-1.5">
-              {asked ? (
-                <p className="text-xs text-cyan-600 text-center">
-                  ✓ Queued — edit the question and press Send.
-                </p>
-              ) : attached ? (
-                <p className="text-xs text-cyan-600 text-center">
-                  ✓ Attached — will be included in your next message
-                </p>
-              ) : (
-                <>
-                  {onAskAboutFile && (
-                    <button
-                      onClick={handleAsk}
-                      className="w-full text-xs py-1.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors"
+              {/* Diff lines */}
+              <div className="overflow-y-auto flex-1">
+                {getDisplayLines(proposal.diff).map((line, i) => {
+                  if (line.type === "gap") {
+                    return (
+                      <div
+                        key={i}
+                        className="px-3 py-0.5 text-xs text-slate-700 bg-slate-800/40 text-center select-none"
+                      >
+                        ··· {line.count} unchanged line
+                        {line.count !== 1 ? "s" : ""} ···
+                      </div>
+                    );
+                  }
+                  const bg =
+                    line.type === "added"
+                      ? "bg-green-900/30"
+                      : line.type === "removed"
+                      ? "bg-red-900/30"
+                      : "";
+                  const text =
+                    line.type === "added"
+                      ? "text-green-300"
+                      : line.type === "removed"
+                      ? "text-red-300"
+                      : "text-slate-600";
+                  const prefix =
+                    line.type === "added"
+                      ? "+"
+                      : line.type === "removed"
+                      ? "-"
+                      : " ";
+                  return (
+                    <div
+                      key={i}
+                      className={`flex gap-2 px-3 py-px font-mono text-xs leading-relaxed ${bg} ${text}`}
                     >
-                      Ask Jarvis about this file
-                    </button>
+                      <span className="flex-shrink-0 select-none w-2.5">
+                        {prefix}
+                      </span>
+                      <span className="whitespace-pre-wrap break-all">
+                        {line.content}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Approve / Cancel buttons */}
+              <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60 space-y-1.5">
+                {approveError && (
+                  <p className="text-xs text-red-500/70 text-center">
+                    {approveError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void handleApprove()}
+                    disabled={approveLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-green-900/20 text-green-400 border border-green-500/20 hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {approveLoading ? "Writing…" : "Approve write"}
+                  </button>
+                  <button
+                    onClick={handleCancelProposal}
+                    disabled={approveLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* ── Normal file preview ─────────────────────────────────────── */
+            <>
+              {/* File content */}
+              <div className="overflow-y-auto px-3 py-2 flex-1">
+                {fileLoading && (
+                  <p className="text-xs text-slate-600">Loading…</p>
+                )}
+                {fileError && (
+                  <p className="text-xs text-red-500/70 leading-relaxed">
+                    {fileError}
+                  </p>
+                )}
+                {fileContent !== null && (
+                  <pre className="text-xs text-slate-400 whitespace-pre-wrap break-words font-mono leading-relaxed">
+                    {fileContent}
+                  </pre>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              {fileContent !== null && (
+                <div className="flex-shrink-0 px-3 py-2 border-t border-slate-800/60 space-y-1.5">
+                  {writeSuccess ? (
+                    <p className="text-xs text-green-500 text-center">
+                      ✓ File written successfully.
+                    </p>
+                  ) : proposalLoading ? (
+                    <p className="text-xs text-slate-600 text-center">
+                      Creating proposal…
+                    </p>
+                  ) : proposalError ? (
+                    <>
+                      <p className="text-xs text-red-500/70 text-center">
+                        {proposalError}
+                      </p>
+                      <button
+                        onClick={() => void handleProposeEdit()}
+                        className="w-full text-xs py-1.5 rounded bg-amber-900/20 text-amber-500 border border-amber-500/20 hover:bg-amber-900/30 hover:text-amber-400 transition-colors"
+                      >
+                        Retry propose
+                      </button>
+                    </>
+                  ) : asked ? (
+                    <p className="text-xs text-cyan-600 text-center">
+                      ✓ Queued — edit the question and press Send.
+                    </p>
+                  ) : attached ? (
+                    <p className="text-xs text-cyan-600 text-center">
+                      ✓ Attached — will be included in your next message
+                    </p>
+                  ) : (
+                    <>
+                      {onAskAboutFile && (
+                        <button
+                          onClick={handleAsk}
+                          className="w-full text-xs py-1.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors"
+                        >
+                          Ask Jarvis about this file
+                        </button>
+                      )}
+                      {onAttachFile && (
+                        <button
+                          onClick={handleAttach}
+                          className="w-full text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors"
+                        >
+                          Attach to chat
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void handleProposeEdit()}
+                        className="w-full text-xs py-1.5 rounded bg-amber-900/20 text-amber-500 border border-amber-500/20 hover:bg-amber-900/30 hover:text-amber-400 transition-colors"
+                      >
+                        Propose safe edit
+                      </button>
+                    </>
                   )}
-                  {onAttachFile && (
-                    <button
-                      onClick={handleAttach}
-                      className="w-full text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors"
-                    >
-                      Attach to chat
-                    </button>
-                  )}
-                </>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
       )}

@@ -20,6 +20,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Workspace folder navigation (v0.2.3)** — click into subdirectories (`drafts/`, `projects/`, `sandbox/`, and nested folders) directly in the Workspace Files panel. Breadcrumb path indicator shows the current location. Up arrow and clickable breadcrumbs navigate back. Everything remains inside the sandbox workspace.
 - **Ask Jarvis about this file (v0.2.4)** — one click attaches a workspace file and pre-fills a suggested question in the chat input. Nothing is sent automatically — edit the question and press Send.
 - **Workspace refresh (v0.2.5)** — a ↻ button in the Workspace Files panel header reloads the current folder listing. If the previewed file is no longer present after refresh, the preview is cleared automatically.
+- **Write-with-approval (v0.3.0)** — file writes are now possible but only through an explicit two-step flow: "Propose safe edit" creates a pending proposal with a diff preview; "Approve write" applies it. Nothing is ever written automatically. All writes are sandboxed to the workspace directory.
 
 ## Prerequisites
 

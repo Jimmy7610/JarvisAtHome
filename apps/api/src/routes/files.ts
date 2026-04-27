@@ -9,6 +9,7 @@ import {
   listFiles,
   readTextFile,
 } from "../services/fileTools";
+import { proposeWrite, approveWrite } from "../services/writeTools";
 import path from "path";
 
 const router = Router();
@@ -55,6 +56,63 @@ router.get("/read", (req: Request, res: Response) => {
   try {
     const { content, size } = readTextFile(relativePath);
     res.json({ ok: true, path: relativePath, content, size });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    res.json({ ok: false, error: message });
+  }
+});
+
+// POST /files/propose-write
+// Validates the target path, reads the current content, computes a diff, and
+// stores a pending proposal in the server-side in-memory store.
+// Nothing is written to disk at this stage.
+// Returns: { ok: true, id, path, before, after, diff }
+// Returns: { ok: false, error } if path is invalid, file is missing, etc.
+router.post("/propose-write", (req: Request, res: Response) => {
+  const body = req.body as { path?: unknown; content?: unknown };
+
+  const relativePath =
+    typeof body.path === "string" ? body.path.trim() : "";
+  const content =
+    typeof body.content === "string" ? body.content : null;
+
+  if (!relativePath) {
+    res.json({ ok: false, error: "path is required." });
+    return;
+  }
+  if (content === null) {
+    res.json({ ok: false, error: "content is required." });
+    return;
+  }
+
+  try {
+    const result = proposeWrite(relativePath, content);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    res.json({ ok: false, error: message });
+  }
+});
+
+// POST /files/approve-write
+// Looks up a pending proposal by id, re-validates the path, and writes the
+// approved content to disk. The proposal is consumed and cannot be approved twice.
+// Returns: { ok: true, path, written: true }
+// Returns: { ok: false, error } if proposal not found, expired, or write fails.
+router.post("/approve-write", (req: Request, res: Response) => {
+  const body = req.body as { proposalId?: unknown };
+
+  const proposalId =
+    typeof body.proposalId === "string" ? body.proposalId.trim() : "";
+
+  if (!proposalId) {
+    res.json({ ok: false, error: "proposalId is required." });
+    return;
+  }
+
+  try {
+    const result = approveWrite(proposalId);
+    res.json({ ok: true, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
     res.json({ ok: false, error: message });
