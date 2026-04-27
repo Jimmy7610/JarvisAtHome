@@ -22,6 +22,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Workspace refresh (v0.2.5)** — a ↻ button in the Workspace Files panel header reloads the current folder listing. If the previewed file is no longer present after refresh, the preview is cleared automatically.
 - **Write-with-approval (v0.3.0)** — file writes are now possible but only through an explicit two-step flow: "Propose safe edit" creates a pending proposal with a diff preview; "Approve write" applies it. Nothing is ever written automatically. All writes are sandboxed to the workspace directory.
 - **Write activity events (v0.3.1)** — propose, approve, cancel, and failure events from the write-with-approval flow now appear in the Activity Log panel with amber (write) or red (error) styling.
+- **Chat-created write proposals (v0.3.2)** — when the assistant response contains a `jarvis-write-proposal` fenced block, ChatPanel automatically creates a pending write proposal and shows a diff with Approve/Cancel buttons. Nothing is written until the user clicks "Approve write". All workspace safety rules still apply.
 
 ## Prerequisites
 

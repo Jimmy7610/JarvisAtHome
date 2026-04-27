@@ -311,6 +311,7 @@ export default function DashboardPage() {
               onClearAttachment={handleClearAttachment}
               prefillInput={prefillInput}
               onConsumePrefill={handleConsumePrefill}
+              onActivity={handleActivity}
             />
           )}
         </section>

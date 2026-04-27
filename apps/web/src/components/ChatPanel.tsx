@@ -2,6 +2,46 @@
 
 import { useState, useRef, useEffect, FormEvent } from "react";
 
+// ─── Write proposal types (mirrors WorkspacePanel) ────────────────────────────
+
+type DiffLine = {
+  type: "unchanged" | "added" | "removed";
+  content: string;
+};
+
+type DisplayLine = DiffLine | { type: "gap"; count: number };
+
+const DIFF_CONTEXT = 5;
+
+function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
+  const firstChange = diff.findIndex((l) => l.type !== "unchanged");
+  if (firstChange === -1) {
+    if (diff.length <= DIFF_CONTEXT) return [...diff];
+    return [
+      { type: "gap", count: diff.length - DIFF_CONTEXT },
+      ...diff.slice(diff.length - DIFF_CONTEXT),
+    ];
+  }
+  const lastChange =
+    diff.length -
+    1 -
+    [...diff].reverse().findIndex((l) => l.type !== "unchanged");
+  const result: DisplayLine[] = [];
+  const leadStart = Math.max(0, firstChange - DIFF_CONTEXT);
+  if (leadStart > 0) result.push({ type: "gap", count: leadStart });
+  for (let i = leadStart; i < firstChange; i++) result.push(diff[i]);
+  for (let i = firstChange; i <= lastChange; i++) result.push(diff[i]);
+  const trailEnd = Math.min(diff.length - 1, lastChange + DIFF_CONTEXT);
+  for (let i = lastChange + 1; i <= trailEnd; i++) result.push(diff[i]);
+  if (trailEnd < diff.length - 1)
+    result.push({ type: "gap", count: diff.length - 1 - trailEnd });
+  return result;
+}
+
+// Matches a ```jarvis-write-proposal ... ``` fenced block in an assistant response.
+// The capture group contains the raw JSON body.
+const WRITE_PROPOSAL_REGEX = /```jarvis-write-proposal\s*\n([\s\S]*?)\n```/;
+
 interface ChatMessage {
   role: "user" | "assistant" | "error" | "cancelled";
   text: string;
@@ -200,6 +240,7 @@ export default function ChatPanel({
   onClearAttachment,
   prefillInput,
   onConsumePrefill,
+  onActivity,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -212,6 +253,8 @@ export default function ChatPanel({
   prefillInput?: string | null;
   // Called after ChatPanel reads prefillInput so the parent can reset it to null.
   onConsumePrefill?: () => void;
+  // Reports a named activity event to the parent for display in ActivityPanel.
+  onActivity?: (text: string, type?: "info" | "write" | "error") => void;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -231,6 +274,21 @@ export default function ChatPanel({
   const [historySource, setHistorySource] = useState<
     "backend" | "local" | null
   >(null);
+
+  // ── Chat-created write proposal state ────────────────────────────────────
+  // A proposal is created when the assistant response contains a jarvis-write-proposal block.
+  // Nothing is written until the user clicks "Approve write".
+  const [chatProposal, setChatProposal] = useState<{
+    id: string;
+    path: string;
+    diff: DiffLine[];
+  } | null>(null);
+  const [chatProposalLoading, setChatProposalLoading] = useState(false);
+  const [chatProposalError, setChatProposalError] = useState<string | null>(null);
+  const [chatApproveLoading, setChatApproveLoading] = useState(false);
+  const [chatApproveError, setChatApproveError] = useState<string | null>(null);
+  // true after a successful write — lets the user see confirmation before dismissing
+  const [chatWriteSuccess, setChatWriteSuccess] = useState(false);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -309,10 +367,156 @@ export default function ChatPanel({
     abortControllerRef.current?.abort();
   };
 
+  // ── Chat write proposal handlers ──────────────────────────────────────────
+
+  // Called after streaming ends. Scans the full response text for a
+  // jarvis-write-proposal fenced block and, if found, calls POST /files/propose-write.
+  // On success the diff is stored in chatProposal and shown in the UI.
+  // Nothing is written to disk here — the user must click "Approve write".
+  async function detectAndPropose(text: string): Promise<void> {
+    const match = WRITE_PROPOSAL_REGEX.exec(text);
+    if (!match) return;
+
+    onActivity?.("Chat write proposal detected — creating proposal…", "info");
+    setChatProposalLoading(true);
+    setChatProposalError(null);
+    setChatWriteSuccess(false);
+
+    let parsed: { path?: unknown; content?: unknown };
+    try {
+      parsed = JSON.parse(match[1]) as { path?: unknown; content?: unknown };
+    } catch {
+      const errMsg = "Failed to parse write proposal JSON from assistant response.";
+      setChatProposalError(errMsg);
+      setChatProposalLoading(false);
+      onActivity?.(`Chat write proposal parse error: ${errMsg}`, "error");
+      return;
+    }
+
+    const proposalPath =
+      typeof parsed.path === "string" ? parsed.path.trim() : "";
+    const proposalContent =
+      typeof parsed.content === "string" ? parsed.content : null;
+
+    if (!proposalPath || proposalContent === null) {
+      const errMsg =
+        "Write proposal from chat is missing required path or content fields.";
+      setChatProposalError(errMsg);
+      setChatProposalLoading(false);
+      onActivity?.(`Chat write proposal invalid: ${errMsg}`, "error");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/files/propose-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: proposalPath, content: proposalContent }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        id?: string;
+        path?: string;
+        diff?: DiffLine[];
+        error?: string;
+      };
+      if (!data.ok || !data.id || !data.diff) {
+        const errMsg = data.error ?? "Backend rejected the write proposal.";
+        setChatProposalError(errMsg);
+        onActivity?.(
+          `Chat write proposal failed for ${proposalPath}: ${errMsg}`,
+          "error"
+        );
+        return;
+      }
+      setChatProposal({
+        id: data.id,
+        path: data.path ?? proposalPath,
+        diff: data.diff,
+      });
+      onActivity?.(
+        `Chat write proposal created for workspace/${proposalPath}`,
+        "write"
+      );
+    } catch {
+      const errMsg = "API unreachable — is the Jarvis API running?";
+      setChatProposalError(errMsg);
+      onActivity?.(
+        `Chat write proposal failed for ${proposalPath}: ${errMsg}`,
+        "error"
+      );
+    } finally {
+      setChatProposalLoading(false);
+    }
+  }
+
+  async function handleChatApprove(): Promise<void> {
+    if (!chatProposal) return;
+    setChatApproveLoading(true);
+    setChatApproveError(null);
+
+    try {
+      const res = await fetch(`${API_URL}/files/approve-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposalId: chatProposal.id }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        path?: string;
+        written?: boolean;
+        error?: string;
+      };
+      if (!data.ok) {
+        const errMsg = data.error ?? "Failed to approve write.";
+        setChatApproveError(errMsg);
+        onActivity?.(
+          `Chat write approval failed for ${chatProposal.path}: ${errMsg}`,
+          "error"
+        );
+        return;
+      }
+      onActivity?.(
+        `Chat write approved and applied to workspace/${chatProposal.path}`,
+        "write"
+      );
+      setChatProposal(null);
+      setChatWriteSuccess(true);
+    } catch {
+      const errMsg = "API unreachable — is the Jarvis API running?";
+      setChatApproveError(errMsg);
+      onActivity?.(
+        `Chat write approval failed: ${errMsg}`,
+        "error"
+      );
+    } finally {
+      setChatApproveLoading(false);
+    }
+  }
+
+  function handleChatCancelProposal(): void {
+    const cancelledPath = chatProposal?.path;
+    setChatProposal(null);
+    setChatProposalError(null);
+    setChatApproveError(null);
+    if (cancelledPath) {
+      onActivity?.(
+        `Chat write proposal cancelled for workspace/${cancelledPath}`,
+        "info"
+      );
+    }
+  }
+
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || loading) return;
+
+    // Clear any previous chat-created write proposal so the next response starts fresh
+    setChatProposal(null);
+    setChatProposalError(null);
+    setChatApproveError(null);
+    setChatWriteSuccess(false);
 
     // Snapshot and immediately clear the attachment so it cannot be sent twice
     const attachmentSnapshot = attachment ?? null;
@@ -442,9 +646,11 @@ export default function ChatPanel({
         if (sid !== null) {
           void persistMessage(sid, "error", errorText);
         }
-      } else if (assistantText && sid !== null) {
+      } else if (assistantText) {
         // Persist successful assistant response with model name if known
-        void persistMessage(sid, "assistant", assistantText, modelName);
+        if (sid !== null) void persistMessage(sid, "assistant", assistantText, modelName);
+        // Scan for a jarvis-write-proposal block and create a pending proposal if found
+        void detectAndPropose(assistantText);
       }
     } catch (err: unknown) {
       // User-initiated abort — not an error
@@ -576,6 +782,140 @@ export default function ChatPanel({
         {/* Scroll anchor */}
         <div ref={bottomRef} />
       </div>
+
+      {/* Chat write proposal banner — shown when the assistant response contained a proposal block */}
+      {(chatProposal || chatProposalLoading || chatProposalError || chatWriteSuccess) && (
+        <div className="flex-shrink-0 border-t border-amber-500/20 bg-amber-900/10">
+          {/* Banner header */}
+          <div className="flex items-center justify-between px-6 py-2">
+            <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest">
+              {chatWriteSuccess ? "Write applied" : "Pending write approval"}
+            </p>
+            {(chatWriteSuccess || chatProposalError) && (
+              <button
+                onClick={() => {
+                  setChatProposal(null);
+                  setChatProposalError(null);
+                  setChatApproveError(null);
+                  setChatWriteSuccess(false);
+                }}
+                className="text-slate-600 hover:text-slate-400 text-sm leading-none"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          {chatProposalLoading && (
+            <p className="px-6 pb-3 text-xs text-slate-600">
+              Creating proposal from assistant response…
+            </p>
+          )}
+
+          {chatProposalError && (
+            <p className="px-6 pb-3 text-xs text-red-500/70">{chatProposalError}</p>
+          )}
+
+          {chatWriteSuccess && (
+            <p className="px-6 pb-3 text-xs text-green-400">
+              ✓ File written successfully. Open the Workspace panel to see the updated content.
+            </p>
+          )}
+
+          {chatProposal && (
+            <>
+              <div className="px-6 pb-1">
+                <p className="text-xs text-amber-700">
+                  Target:{" "}
+                  <span className="text-amber-500 font-mono">
+                    workspace/{chatProposal.path}
+                  </span>
+                </p>
+                <p className="text-xs text-amber-800 mt-0.5">
+                  Nothing has been written yet.
+                </p>
+              </div>
+
+              {/* Diff viewer */}
+              <div
+                className="mx-6 mb-2 rounded border border-slate-700/60 overflow-y-auto"
+                style={{ maxHeight: "160px" }}
+              >
+                {getDisplayLines(chatProposal.diff).map((line, i) => {
+                  if (line.type === "gap") {
+                    return (
+                      <div
+                        key={i}
+                        className="px-3 py-0.5 text-xs text-slate-700 bg-slate-800/40 text-center select-none"
+                      >
+                        ··· {line.count} unchanged line
+                        {line.count !== 1 ? "s" : ""} ···
+                      </div>
+                    );
+                  }
+                  const bg =
+                    line.type === "added"
+                      ? "bg-green-900/30"
+                      : line.type === "removed"
+                      ? "bg-red-900/30"
+                      : "";
+                  const text =
+                    line.type === "added"
+                      ? "text-green-300"
+                      : line.type === "removed"
+                      ? "text-red-300"
+                      : "text-slate-600";
+                  const prefix =
+                    line.type === "added"
+                      ? "+"
+                      : line.type === "removed"
+                      ? "-"
+                      : " ";
+                  return (
+                    <div
+                      key={i}
+                      className={`flex gap-2 px-3 py-px font-mono text-xs leading-relaxed ${bg} ${text}`}
+                    >
+                      <span className="flex-shrink-0 select-none w-2.5">
+                        {prefix}
+                      </span>
+                      <span className="whitespace-pre-wrap break-all">
+                        {line.content}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Approve / Cancel */}
+              <div className="px-6 pb-3 space-y-1.5">
+                {chatApproveError && (
+                  <p className="text-xs text-red-500/70 text-center">
+                    {chatApproveError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void handleChatApprove()}
+                    disabled={chatApproveLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-green-900/20 text-green-400 border border-green-500/20 hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {chatApproveLoading ? "Writing…" : "Approve write"}
+                  </button>
+                  <button
+                    onClick={handleChatCancelProposal}
+                    disabled={chatApproveLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Input bar */}
       <form onSubmit={send} className="px-6 py-4 border-t border-slate-800">
