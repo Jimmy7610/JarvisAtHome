@@ -117,11 +117,14 @@ function buildBreadcrumbs(
 export default function WorkspacePanel({
   onAttachFile,
   onAskAboutFile,
+  onActivity,
 }: {
   onAttachFile?: (path: string, content: string, size: number) => void;
   // Attaches the file AND prefills a suggested question in the chat input.
   // Nothing is sent automatically — user edits and presses Send.
   onAskAboutFile?: (path: string, content: string, size: number) => void;
+  // Reports a named activity event to the parent for display in ActivityPanel.
+  onActivity?: (text: string, type?: "info" | "write" | "error") => void;
 } = {}) {
   // Currently browsed directory (relative path from workspace root; "" = root)
   const [currentPath, setCurrentPath] = useState("");
@@ -295,12 +298,23 @@ export default function WorkspacePanel({
         error?: string;
       };
       if (!data.ok || !data.id || !data.diff) {
-        setProposalError(data.error ?? "Failed to create proposal.");
+        const errMsg = data.error ?? "Failed to create proposal.";
+        setProposalError(errMsg);
+        onActivity?.(
+          `Write proposal failed for ${selectedPath}: ${errMsg}`,
+          "error"
+        );
         return;
       }
       setProposal({ id: data.id, path: data.path ?? selectedPath, diff: data.diff });
+      onActivity?.(
+        `Write proposal created for workspace/${selectedPath}`,
+        "write"
+      );
     } catch {
-      setProposalError("API unreachable — is the Jarvis API running?");
+      const errMsg = "API unreachable — is the Jarvis API running?";
+      setProposalError(errMsg);
+      onActivity?.(`Write proposal failed for ${selectedPath}: ${errMsg}`, "error");
     } finally {
       setProposalLoading(false);
     }
@@ -324,9 +338,19 @@ export default function WorkspacePanel({
         error?: string;
       };
       if (!data.ok) {
-        setApproveError(data.error ?? "Failed to approve write.");
+        const errMsg = data.error ?? "Failed to approve write.";
+        setApproveError(errMsg);
+        onActivity?.(
+          `Write approval failed for ${selectedPath}: ${errMsg}`,
+          "error"
+        );
         return;
       }
+
+      onActivity?.(
+        `Write approved and applied to workspace/${selectedPath}`,
+        "write"
+      );
 
       // Clear proposal and show success, then reload the file content in-place
       setProposal(null);
@@ -351,16 +375,23 @@ export default function WorkspacePanel({
       // Refresh directory listing so the updated file size is shown
       void fetchList(currentPath);
     } catch {
-      setApproveError("API unreachable — is the Jarvis API running?");
+      const errMsg = "API unreachable — is the Jarvis API running?";
+      setApproveError(errMsg);
+      onActivity?.(`Write approval failed for ${selectedPath}: ${errMsg}`, "error");
     } finally {
       setApproveLoading(false);
     }
   }
 
   function handleCancelProposal(): void {
+    const cancelledPath = proposal?.path ?? selectedPath;
     setProposal(null);
     setProposalError(null);
     setApproveError(null);
+    onActivity?.(
+      `Write proposal cancelled for workspace/${cancelledPath}`,
+      "info"
+    );
   }
 
   const breadcrumbs = buildBreadcrumbs(currentPath);
