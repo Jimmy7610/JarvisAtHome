@@ -17,6 +17,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **System activity log** — live activity feed in the right panel.
 - **Read-only workspace file browser (v0.2.1)** — list and read text files from the `workspace/` sandbox directory. Path traversal protected. No writes.
 - **Attach file to chat (v0.2.2)** — click "Attach to chat" on a previewed file to include its content in your next message. File content is prepended to the API request in a labelled fenced block. Attachment clears after send. No autonomous LLM file access.
+- **Workspace folder navigation (v0.2.3)** — click into subdirectories (`drafts/`, `projects/`, `sandbox/`, and nested folders) directly in the Workspace Files panel. Breadcrumb path indicator shows the current location. Up arrow and clickable breadcrumbs navigate back. Everything remains inside the sandbox workspace.
 
 ## Prerequisites
 

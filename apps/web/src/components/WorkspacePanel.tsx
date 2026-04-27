@@ -2,6 +2,7 @@
 
 // Workspace file browser — read-only view of the Jarvis sandbox workspace.
 // Files can be listed and read; no write, edit, delete, or move actions exist.
+// v0.2.3: supports subdirectory navigation with breadcrumb path indicator.
 
 import { useState, useEffect } from "react";
 
@@ -37,11 +38,32 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
+// Build breadcrumb segments from a relative directory path.
+// ""         → [{ label: "workspace", path: "" }]
+// "drafts"   → [{ label: "workspace", path: "" }, { label: "drafts", path: "drafts" }]
+function buildBreadcrumbs(
+  dirPath: string
+): Array<{ label: string; path: string }> {
+  const crumbs: Array<{ label: string; path: string }> = [
+    { label: "workspace", path: "" },
+  ];
+  if (!dirPath) return crumbs;
+  const parts = dirPath.split("/").filter(Boolean);
+  let accumulated = "";
+  for (const part of parts) {
+    accumulated = accumulated ? `${accumulated}/${part}` : part;
+    crumbs.push({ label: part, path: accumulated });
+  }
+  return crumbs;
+}
+
 export default function WorkspacePanel({
   onAttachFile,
 }: {
   onAttachFile?: (path: string, content: string, size: number) => void;
 } = {}) {
+  // Currently browsed directory (relative path from workspace root; "" = root)
+  const [currentPath, setCurrentPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -54,16 +76,19 @@ export default function WorkspacePanel({
   // true once the user has clicked "Attach to chat" for the currently previewed file
   const [attached, setAttached] = useState(false);
 
-  // Load root listing on mount
+  // Reload the listing whenever the current directory changes
   useEffect(() => {
-    void fetchList();
-  }, []);
+    void fetchList(currentPath);
+  }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function fetchList(): Promise<void> {
+  async function fetchList(dirPath: string): Promise<void> {
     setListLoading(true);
     setListError(null);
     try {
-      const res = await fetch(`${API_URL}/files/list`);
+      const url = dirPath
+        ? `${API_URL}/files/list?path=${encodeURIComponent(dirPath)}`
+        : `${API_URL}/files/list`;
+      const res = await fetch(url);
       const data = (await res.json()) as ListResponse;
       if (!data.ok) {
         setListError(data.error ?? "Failed to list workspace files.");
@@ -75,6 +100,28 @@ export default function WorkspacePanel({
     } finally {
       setListLoading(false);
     }
+  }
+
+  // Navigate to a directory. Clears the file preview if the selected file
+  // does not live directly inside the destination directory.
+  function navigateTo(dirPath: string): void {
+    if (selectedPath !== null) {
+      // A file belongs to a folder if it is a direct child of that folder.
+      // Root children have no "/" in their path; subdir children start with "dirPath/".
+      const fileBelongs =
+        dirPath === ""
+          ? !selectedPath.includes("/")
+          : selectedPath.startsWith(dirPath + "/");
+      if (!fileBelongs) closePreview();
+    }
+    setCurrentPath(dirPath);
+  }
+
+  function navigateUp(): void {
+    if (!currentPath) return; // already at root
+    const parts = currentPath.split("/");
+    parts.pop();
+    navigateTo(parts.join("/"));
   }
 
   async function handleSelectFile(filePath: string): Promise<void> {
@@ -102,7 +149,7 @@ export default function WorkspacePanel({
     }
   }
 
-  function handleClose(): void {
+  function closePreview(): void {
     setSelectedPath(null);
     setFileContent(null);
     setFileError(null);
@@ -114,6 +161,9 @@ export default function WorkspacePanel({
     onAttachFile(selectedPath, fileContent, selectedSize);
     setAttached(true);
   }
+
+  const breadcrumbs = buildBreadcrumbs(currentPath);
+  const isAtRoot = currentPath === "";
 
   return (
     <div className="flex flex-col overflow-hidden border-t border-slate-800">
@@ -127,8 +177,53 @@ export default function WorkspacePanel({
         </span>
       </div>
 
-      {/* File list */}
-      <div className="overflow-y-auto px-3 py-2 space-y-px" style={{ maxHeight: "140px" }}>
+      {/* Breadcrumb / path indicator */}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-slate-800/60 flex-shrink-0 min-w-0">
+        {/* Up button — only shown when not at root */}
+        {!isAtRoot && (
+          <button
+            onClick={navigateUp}
+            className="flex-shrink-0 text-slate-600 hover:text-slate-400 transition-colors text-xs mr-0.5"
+            title="Go up one level"
+            aria-label="Go up"
+          >
+            ↑
+          </button>
+        )}
+        {/* Clickable breadcrumb segments */}
+        <div className="flex items-center min-w-0 overflow-hidden text-xs">
+          {breadcrumbs.map((crumb, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span
+                key={crumb.path}
+                className="flex items-center min-w-0 flex-shrink-0"
+              >
+                {i > 0 && (
+                  <span className="text-slate-800 px-0.5 flex-shrink-0">/</span>
+                )}
+                {isLast ? (
+                  <span className="text-slate-400 truncate">{crumb.label}</span>
+                ) : (
+                  <button
+                    onClick={() => navigateTo(crumb.path)}
+                    className="text-slate-600 hover:text-slate-400 transition-colors truncate"
+                    title={`Go to ${crumb.label}`}
+                  >
+                    {crumb.label}
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* File / directory listing */}
+      <div
+        className="overflow-y-auto px-3 py-2 space-y-px"
+        style={{ maxHeight: "120px" }}
+      >
         {listLoading && (
           <p className="text-xs text-slate-600 px-1 py-1">Loading…</p>
         )}
@@ -139,22 +234,22 @@ export default function WorkspacePanel({
         )}
         {!listLoading && !listError && entries.length === 0 && (
           <p className="text-xs text-slate-600 px-1 py-1">
-            No files in workspace yet.
+            {isAtRoot ? "No files in workspace yet." : "Empty folder."}
           </p>
         )}
         {!listLoading &&
           entries.map((entry) => {
             if (entry.type === "directory") {
               return (
-                <div
+                <button
                   key={entry.path}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-slate-700"
-                  title={entry.path}
+                  onClick={() => navigateTo(entry.path)}
+                  className="w-full text-left flex items-center gap-1.5 px-2 py-1 rounded text-xs text-slate-500 hover:bg-slate-800/60 hover:text-slate-300 transition-colors"
+                  title={`Open ${entry.name}/`}
                 >
-                  {/* Directory indicator */}
-                  <span className="text-slate-800">▸</span>
+                  <span className="text-slate-600 flex-shrink-0">▸</span>
                   <span className="truncate">{entry.name}/</span>
-                </div>
+                </button>
               );
             }
 
@@ -184,7 +279,10 @@ export default function WorkspacePanel({
 
       {/* File preview — shown when a file is selected */}
       {selectedPath && (
-        <div className="flex flex-col border-t border-slate-800 flex-shrink-0" style={{ maxHeight: "160px" }}>
+        <div
+          className="flex flex-col border-t border-slate-800 flex-shrink-0"
+          style={{ maxHeight: "160px" }}
+        >
           {/* Preview header */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/60 flex-shrink-0">
             <span
@@ -194,7 +292,7 @@ export default function WorkspacePanel({
               {selectedPath}
             </span>
             <button
-              onClick={handleClose}
+              onClick={closePreview}
               className="flex-shrink-0 ml-2 text-slate-700 hover:text-slate-400 text-sm leading-none"
               aria-label="Close preview"
             >
