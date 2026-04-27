@@ -2,173 +2,155 @@
 
 Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
-The goal is to create a clean, modular and secure assistant that runs locally, uses Ollama as the only AI model provider, and can grow over time with tools for file editing, project help, drafts, email, smart home integrations, voice control and automation.
+It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## Core idea
+## What Jarvis can do right now (v0.1)
 
-Jarvis should work as a personal local AI control center.
+- **Chat with local Ollama models** — streaming, token-by-token responses.
+- **Stop streaming** mid-response with a cancel button.
+- **Conversation context** — the last 12 messages are sent with each request so Jarvis can follow up.
+- **Multiple chat sessions** — create, switch, rename and delete sessions from the sidebar.
+- **Persistent chat history** — all messages are stored in a local SQLite database that survives browser refreshes and clears.
+- **Auto-title** — the session title is set from your first message automatically.
+- **Keyboard shortcut** — `Ctrl+Alt+N` creates a new chat from anywhere on the page.
+- **Ollama status panel** — shows whether Ollama is reachable and which models are available.
+- **System activity log** — live activity feed in the right panel.
 
-It should be able to:
+## Prerequisites
 
-- Chat with the user using local Ollama models.
-- Help with coding and project planning.
-- Read project files when allowed.
-- Suggest file changes before writing anything.
-- Show diffs before applying changes.
-- Save chat history locally.
-- Keep local project memory.
-- Create drafts for emails, documents and prompts.
-- Later integrate with Home Assistant, cameras, sensors and speakers.
-- Later support voice input and text-to-speech.
+| Requirement | Version |
+|---|---|
+| Node.js | ≥ 20 |
+| npm | ≥ 10 |
+| [Ollama](https://ollama.com) | running locally |
 
-## Important rule
-
-Ollama is the only AI provider.
-
-No OpenAI, Claude API, Gemini API or other cloud AI provider should be added to the application unless explicitly requested by Jimmy.
-
-Claude may be used as a development assistant to build the code, but the Jarvis app itself must only use Ollama.
-
-## Project path
-
-C:\Users\Jimmy\Documents\GitHub\Jarvis
-
-## Structure
-
-apps/web        - Frontend dashboard and chat UI
-apps/api        - Backend API, Ollama integration and tool router
-packages/core   - Shared Jarvis logic, prompts, types and flows
-packages/tools  - File tools, email tools, system tools and future integrations
-packages/memory - Local memory and chat storage
-packages/config - Shared configuration and environment validation
-data            - Local runtime data such as chats, memory, logs and uploads
-workspace       - Safe workspace for files Jarvis may work with
-docs            - Architecture, prompts, decisions and setup notes
-scripts         - Setup and maintenance scripts
-docker          - Future Docker files
-tests           - Unit, integration and e2e tests
-
-## Development phases
-
-### v0.1 - Jarvis Core
-
-- Create the basic web dashboard.
-- Connect frontend to backend.
-- Connect backend to Ollama.
-- Add simple local chat.
-- Add system activity log.
-- Add basic project structure.
-- Add local chat persistence.
-
-### v0.2 - File Tools
-
-- Allow Jarvis to read files inside allowed folders.
-- Allow Jarvis to propose file edits.
-- Show diffs before applying changes.
-- Require user approval before writing files.
-
-### v0.3 - Memory
-
-- Add local memory storage.
-- Add project memory.
-- Add user preferences.
-- Add searchable notes.
-
-### v0.4 - Email Drafts
-
-- Allow Jarvis to write email drafts.
-- Do not send emails automatically.
-- Add approval before sending anything.
-
-### v0.5 - Voice
-
-- Add microphone button.
-- Add speech-to-text.
-- Add text-to-speech.
-
-### v0.6 - Smart Home
-
-- Add Home Assistant integration later if needed.
-- Support sensors, cameras, speakers and automations through Home Assistant.
-
-## Safety principles
-
-Jarvis must never:
-
-- Send emails without explicit approval.
-- Modify files without showing a diff first.
-- Delete files without explicit approval.
-- Run dangerous terminal commands without explicit approval.
-- Use cloud AI providers unless explicitly requested.
-- Store secrets in committed files.
-
-## First milestone
-
-The first milestone is Jarvis Core v0.1.
-
-It should include:
-
-- Next.js frontend in apps/web.
-- Node.js backend in apps/api.
-- A Jarvis dashboard page.
-- A chat input.
-- Backend route for chat.
-- Ollama connection.
-- Simple model/status check.
-- Local system activity log.
-- No file editing yet.
-- No email yet.
-- No Home Assistant yet.
-- No voice yet.
-
-## Development setup
-
-### Prerequisites
-
-- Node.js >= 20
-- npm >= 10
-- Ollama installed locally (not required for v0.1 skeleton)
-
-### Install dependencies
+Ollama must be running at `http://localhost:11434` with at least one model pulled:
 
 ```bash
+ollama pull qwen2.5-coder:latest
+```
+
+Any Ollama model works. The default is `qwen2.5-coder:latest`, configurable via `OLLAMA_DEFAULT_MODEL`.
+
+## Install
+
+```bash
+git clone https://github.com/Jimmy7610/Jarvis.git
+cd Jarvis
 npm install
 ```
 
-### Run in development
+## Configure
 
-Both apps together:
-
-```bash
-npm run dev
-```
-
-Frontend only (http://localhost:3000):
-
-```bash
-npm run dev:web
-```
-
-API only (http://localhost:4000):
-
-```bash
-npm run dev:api
-```
-
-### Environment variables
-
-Copy the example files and adjust if needed:
+Copy the example environment files and adjust if needed:
 
 ```bash
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-## Current status
+The defaults work out of the box for local development.
 
-v0.1 skeleton is in place.
+## Run
 
-- Next.js frontend running on http://localhost:3000
-- Express API running on http://localhost:4000
-- API health check wired into the dashboard status panel
-- Ollama integration is the next step
+```bash
+npm run dev
+```
+
+This starts both the frontend and the API together:
+
+| Service | URL |
+|---|---|
+| Frontend (Next.js) | http://localhost:3000 |
+| Backend API (Express) | http://localhost:4000 |
+| Ollama (external) | http://localhost:11434 |
+
+Run them separately if needed:
+
+```bash
+npm run dev:web   # frontend only
+npm run dev:api   # API only
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+Compiles the TypeScript API and produces an optimised Next.js production build.
+
+## Lint
+
+```bash
+npm run lint
+```
+
+Runs `tsc --noEmit` on the API and `next lint` on the frontend. Both must pass clean.
+
+## Verify SQLite
+
+```bash
+npm run verify:sqlite --workspace=apps/api
+```
+
+Confirms that `better-sqlite3` loads correctly on your platform (win32 / Node v24+).
+
+## Project structure
+
+```
+apps/web        — Next.js 14 frontend (dashboard, chat UI, session sidebar)
+apps/api        — Express + TypeScript backend (Ollama proxy, SQLite persistence)
+packages/       — Shared packages (core, tools, memory, config) — not yet implemented
+data/memory/    — Local SQLite database (gitignored)
+docs/           — Architecture notes, decision logs, prompts
+workspace/      — Safe area for future file tools
+```
+
+## Data storage
+
+Chat sessions and messages are stored in:
+
+```
+data/memory/jarvis.sqlite
+```
+
+This file is local-only and gitignored. It is created automatically on first API start.
+
+## Safety rules
+
+- **Ollama only.** No OpenAI, Claude API, Gemini, Groq or other cloud AI provider is used inside the app.
+- **No file tools yet.** Jarvis cannot read or write project files in v0.1.
+- **No email sending.** Email drafts are planned for v0.4, with explicit approval required.
+- **No Home Assistant.** Smart home integration is planned for v0.6.
+- **No voice.** Voice input/output is planned for v0.5.
+- **No secrets in commits.** Use `.env` files (gitignored). See `.env.example` files.
+
+## Current limitations
+
+- No RAG or semantic memory — Jarvis cannot search past conversations.
+- No file reading or editing.
+- No voice input or output.
+- No smart home integration.
+- No cross-device sync — the SQLite database is local to one machine.
+- Chat history cannot be exported.
+- No multi-user support.
+- No dark/light theme toggle (dark mode only).
+
+## Planned milestones
+
+| Milestone | Goal |
+|---|---|
+| v0.2 | File tools — read files, propose edits, show diffs, require approval |
+| v0.3 | Memory — local memory, project notes, user preferences |
+| v0.4 | Email drafts — write only, never send automatically |
+| v0.5 | Voice — microphone input, text-to-speech output |
+| v0.6 | Smart Home — Home Assistant integration |
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Alt+N` | New Chat |
+| `Enter` (in rename input) | Save renamed title |
+| `Escape` (in rename input) | Cancel rename |
