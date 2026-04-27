@@ -137,6 +137,32 @@ export default function DashboardPage() {
     void fetchSessions();
   }
 
+  // Rename a session title via PATCH /sessions/:id.
+  // No chat reset, no session switch, no localStorage change.
+  async function handleRenameSession(id: number, newTitle: string): Promise<void> {
+    try {
+      const res = await fetch(`${API_URL}/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      if (!res.ok) {
+        console.warn("Rename session: HTTP error", res.status);
+        return;
+      }
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!data.ok) {
+        console.warn("Rename session failed:", data.error);
+        return;
+      }
+    } catch (err) {
+      console.warn("Rename session: request failed:", err);
+      return;
+    }
+    // Refresh the sidebar so the new title is shown
+    void fetchSessions();
+  }
+
   // Create a new blank session and switch to it
   async function handleNewChat(): Promise<void> {
     const id = await createNewSession();
@@ -179,6 +205,7 @@ export default function DashboardPage() {
           onNewChat={() => void handleNewChat()}
           onSelect={handleSwitchSession}
           onDelete={(id) => void handleDeleteSession(id)}
+          onRename={(id, title) => void handleRenameSession(id, title)}
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
