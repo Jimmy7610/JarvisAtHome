@@ -13,6 +13,16 @@ interface HistoryMessage {
   content: string;
 }
 
+// Shape of a message row returned by GET /sessions/:id
+interface BackendMessage {
+  id: number;
+  session_id: number;
+  role: "user" | "assistant" | "error" | "cancelled";
+  content: string;
+  model: string | null;
+  created_at: string;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 // localStorage key for chat history
@@ -141,6 +151,32 @@ async function persistMessage(
   }
 }
 
+// Load chat history from the backend for a given session.
+// Returns the mapped messages on success, null if the backend is unreachable, the session
+// is gone, or the session has no messages yet.
+async function loadSessionFromBackend(
+  sessionId: number
+): Promise<ChatMessage[] | null> {
+  try {
+    const res = await fetch(`${API_URL}/sessions/${sessionId}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      ok: boolean;
+      messages?: BackendMessage[];
+    };
+    if (!data.ok || !Array.isArray(data.messages)) return null;
+    const msgs: ChatMessage[] = data.messages.map((m) => ({
+      role: m.role,
+      text: m.content,
+    }));
+    // Treat an empty message list the same as "nothing from backend"
+    return msgs.length > 0 ? msgs : null;
+  } catch (err) {
+    console.warn("[Jarvis] Failed to load history from backend:", err);
+    return null;
+  }
+}
+
 export default function ChatPanel() {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -156,19 +192,41 @@ export default function ChatPanel() {
   const abortControllerRef = useRef<AbortController | null>(null);
   // Holds the active backend session id once ensureSession resolves
   const sessionIdRef = useRef<number | null>(null);
+  // "backend" = history loaded from SQLite; "local" = localStorage or default
+  const [historySource, setHistorySource] = useState<
+    "backend" | "local" | null
+  >(null);
 
-  // Load saved chat history from localStorage after the component mounts.
+  // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
   useEffect(() => {
-    const saved = loadMessages();
-    if (saved && saved.length > 0) {
-      setMessages(saved);
-    }
-    // Ensure a backend session exists. Re-use stored id if available.
     const existingId = loadSessionId();
+
     if (existingId !== null) {
+      // Session id stored — try to restore from backend first.
       sessionIdRef.current = existingId;
+      loadSessionFromBackend(existingId).then((backendMessages) => {
+        if (backendMessages !== null) {
+          // Backend has history — use it and sync to localStorage as cache.
+          setMessages(backendMessages);
+          saveMessages(backendMessages);
+          setHistorySource("backend");
+        } else {
+          // Backend unavailable or session has no messages — fall back to localStorage.
+          const saved = loadMessages();
+          if (saved && saved.length > 0) {
+            setMessages(saved);
+          }
+          setHistorySource("local");
+        }
+      });
     } else {
+      // No session id yet — use localStorage for initial state, create session in background.
+      const saved = loadMessages();
+      if (saved && saved.length > 0) {
+        setMessages(saved);
+      }
+      setHistorySource("local");
       createSession().then((id) => {
         sessionIdRef.current = id;
       });
@@ -393,6 +451,11 @@ export default function ChatPanel() {
             <span className="text-slate-600">
               context: {contextCount} msg{contextCount !== 1 ? "s" : ""}
             </span>
+            {historySource && (
+              <span className="text-slate-700">
+                {" · "}history: {historySource}
+              </span>
+            )}
           </p>
         </div>
         <button
