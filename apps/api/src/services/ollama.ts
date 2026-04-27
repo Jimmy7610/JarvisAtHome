@@ -11,6 +11,12 @@ const PREFERRED_TEXT_MODELS = [
   "qwen2.5:latest",
 ];
 
+// Shared Jarvis identity prompt — used by both /chat and /chat/stream
+export const JARVIS_SYSTEM_PROMPT =
+  "You are Jarvis, a local-first personal AI assistant for Jimmy Eliasson. " +
+  "You are helpful, calm, practical and concise. " +
+  "You run locally through Ollama only.";
+
 export interface OllamaModel {
   name: string;
   size: number;
@@ -72,7 +78,7 @@ export function resolveModel(
   return installedNames[0];
 }
 
-// Send a single-turn message to Ollama and return the assistant response text.
+// Send a single-turn message to Ollama and return the full assistant response text.
 // Throws on network error, non-200 response, or empty reply.
 export async function callOllamaChat(
   model: string,
@@ -112,4 +118,79 @@ export async function callOllamaChat(
   }
 
   return content;
+}
+
+// Stream a single-turn message to Ollama, yielding content tokens as they arrive.
+// The caller is responsible for writing tokens to the HTTP response.
+// Throws if Ollama is unreachable or returns a non-200 status.
+export async function* streamOllamaChat(
+  model: string,
+  userMessage: string,
+  systemPrompt: string
+): AsyncGenerator<string> {
+  const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      stream: true,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+    }),
+    // Generous timeout for streaming — long responses can take several minutes
+    signal: AbortSignal.timeout(300_000),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(
+      `Ollama returned HTTP ${response.status}${text ? `: ${text}` : ""}`
+    );
+  }
+
+  if (!response.body) {
+    throw new Error("Ollama streaming response has no body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Ollama sends one JSON object per line
+      const lines = buffer.split("\n");
+      // Keep the last (potentially incomplete) line in the buffer
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const chunk = JSON.parse(line) as {
+          message?: { role: string; content: string };
+          done?: boolean;
+        };
+        const token = chunk.message?.content ?? "";
+        if (token) yield token;
+        if (chunk.done) return;
+      }
+    }
+
+    // Flush any remaining buffered content
+    if (buffer.trim()) {
+      const chunk = JSON.parse(buffer) as {
+        message?: { role: string; content: string };
+      };
+      const token = chunk.message?.content ?? "";
+      if (token) yield token;
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

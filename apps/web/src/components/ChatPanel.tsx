@@ -50,15 +50,21 @@ export default function ChatPanel() {
     return saved && saved.length > 0 ? saved : [DEFAULT_GREETING];
   });
   const [input, setInput] = useState("");
+  // loading: true from send until the stream ends (or errors)
   const [loading, setLoading] = useState(false);
+  // streaming: true once the first token has arrived (thinking dots hidden, text visible)
+  const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Persist messages to localStorage whenever they change
+  // Persist to localStorage only when loading finishes, not on every token update.
+  // This avoids dozens of writes per streaming response.
   useEffect(() => {
-    saveMessages(messages);
-  }, [messages]);
+    if (!loading) {
+      saveMessages(messages);
+    }
+  }, [loading, messages]);
 
-  // Scroll to latest message whenever the list changes
+  // Scroll to latest message whenever the list or loading state changes
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -74,48 +80,102 @@ export default function ChatPanel() {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
-    // Append the user message immediately
+    // Show user message immediately
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setInput("");
     setLoading(true);
+    setStreaming(false);
 
     try {
-      const res = await fetch(`${API_URL}/chat`, {
+      const res = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed }),
       });
 
-      const data = (await res.json()) as {
-        ok: boolean;
-        message: string;
-        error?: string;
-      };
-
-      if (data.ok && data.message) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: data.message },
-        ]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "error",
-            text: data.error ?? "Something went wrong. Please try again.",
-          },
-        ]);
+      if (!res.ok || !res.body) {
+        throw new Error(`API returned HTTP ${res.status}`);
       }
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "error",
-          text: "Could not reach the Jarvis API. Is it running on port 4000?",
-        },
-      ]);
+
+      // Add an empty assistant bubble — we'll fill it in as tokens arrive
+      setMessages((prev) => [...prev, { role: "assistant", text: "" }]);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let errorText: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Each chunk from the API is one JSON line terminated with \n
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          const chunk = JSON.parse(line) as
+            | { type: "token"; content: string }
+            | { type: "done"; model: string }
+            | { type: "error"; error: string };
+
+          if (chunk.type === "token") {
+            // Show the bubble instead of thinking dots on the first token
+            if (!streaming) setStreaming(true);
+
+            // Append token to the last message in-place
+            setMessages((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1];
+              updated[updated.length - 1] = {
+                ...last,
+                text: last.text + chunk.content,
+              };
+              return updated;
+            });
+          } else if (chunk.type === "error") {
+            errorText = chunk.error;
+          }
+          // "done" chunk carries the model name — nothing extra to do
+        }
+      }
+
+      // If Ollama reported an error mid-stream, replace the empty bubble with an error
+      if (errorText) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          // If we received no tokens yet the bubble is empty — replace it
+          if (last.role === "assistant" && last.text === "") {
+            updated[updated.length - 1] = { role: "error", text: errorText! };
+          }
+          return updated;
+        });
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Could not reach the Jarvis API. Is it running on port 4000?";
+
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        // If the empty assistant bubble was already added, convert it to an error
+        if (last.role === "assistant" && last.text === "") {
+          updated[updated.length - 1] = { role: "error", text: msg };
+        } else {
+          updated.push({ role: "error", text: msg });
+        }
+        return updated;
+      });
     } finally {
       setLoading(false);
+      setStreaming(false);
     }
   };
 
@@ -127,6 +187,9 @@ export default function ChatPanel() {
     }
   };
 
+  // Show thinking dots only while loading and before the first token arrives
+  const showThinking = loading && !streaming;
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -134,7 +197,7 @@ export default function ChatPanel() {
         <div>
           <h2 className="text-sm font-semibold text-slate-200">Chat</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Non-streaming · Ollama · local only
+            Streaming · Ollama · local only
           </p>
         </div>
         <button
@@ -152,11 +215,19 @@ export default function ChatPanel() {
         {messages.map((msg, i) => {
           if (msg.role === "user") return <UserMessage key={i} text={msg.text} />;
           if (msg.role === "error") return <ErrorMessage key={i} text={msg.text} />;
-          return <AssistantMessage key={i} text={msg.text} />;
+          // Show a blinking cursor on the last assistant message while streaming
+          const isLast = i === messages.length - 1;
+          return (
+            <AssistantMessage
+              key={i}
+              text={msg.text}
+              showCursor={streaming && isLast}
+            />
+          );
         })}
 
-        {/* Thinking indicator */}
-        {loading && (
+        {/* Thinking indicator — visible from send until the first token arrives */}
+        {showThinking && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center flex-shrink-0 text-cyan-400 text-xs font-bold">
               J
@@ -181,7 +252,7 @@ export default function ChatPanel() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={loading ? "Waiting for Jarvis…" : "Message Jarvis…"}
+            placeholder={loading ? "Jarvis is responding…" : "Message Jarvis…"}
             disabled={loading}
             className="flex-1 resize-none rounded-lg bg-slate-800/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           />
@@ -201,7 +272,13 @@ export default function ChatPanel() {
   );
 }
 
-function AssistantMessage({ text }: { text: string }) {
+function AssistantMessage({
+  text,
+  showCursor,
+}: {
+  text: string;
+  showCursor?: boolean;
+}) {
   return (
     <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center flex-shrink-0 text-cyan-400 text-xs font-bold">
@@ -211,6 +288,10 @@ function AssistantMessage({ text }: { text: string }) {
         <p className="text-xs text-cyan-400 font-medium mb-1">Jarvis</p>
         <div className="rounded-lg bg-slate-800/60 border border-slate-700/60 px-4 py-3 text-sm text-slate-300 whitespace-pre-wrap">
           {text}
+          {/* Blinking cursor while tokens are arriving */}
+          {showCursor && (
+            <span className="inline-block w-0.5 h-3.5 bg-cyan-400 ml-0.5 align-middle animate-pulse" />
+          )}
         </div>
       </div>
     </div>
