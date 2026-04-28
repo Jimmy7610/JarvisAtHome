@@ -11,21 +11,29 @@ Replace or supplement the browser Web Speech API with a local TTS server so that
 - Swedish and English voices are available on headless or locked-down systems.
 - No cloud TTS provider is ever called.
 
-## Provider abstraction (v0.5.3)
+## Provider abstraction (v0.5.3) and HTTP route (v0.5.4)
 
-`ChatPanel.tsx` now routes TTS calls through a `TtsProvider` type:
+`ChatPanel.tsx` routes TTS calls through a `TtsProvider` type:
 
 ```typescript
 type TtsProvider = "browser" | "local";
 ```
 
 `speakAssistantText(text)` dispatches to either `speakWithBrowserTts(text)` or
-`speakWithLocalTts()` based on `ttsProviderRef.current`.  The user selects the
+`speakWithLocalTts(text)` based on `ttsProviderRef.current`.  The user selects the
 provider via a dropdown in the voice bar; the choice persists to localStorage
 under `jarvis.voice.provider.v1`.
 
-`speakWithLocalTts()` is currently a placeholder that surfaces an error message.
-No HTTP call is made.
+As of v0.5.4, `speakWithLocalTts` is fully wired:
+
+- Calls `POST /tts/speak` on the Jarvis API (never the local TTS server directly).
+- If the API returns `audio/*` bytes, plays them via `HTMLAudioElement`.
+- If the API returns JSON error, shows it in the speech error row.
+- `stopVoice()` and the Voice replies toggle stop local audio via `audioRef`.
+
+The route `POST /tts/speak` is disabled by default (`LOCAL_TTS_ENABLED=false`).
+Set `LOCAL_TTS_ENABLED=true` in `apps/api/.env` and point `LOCAL_TTS_BASE_URL`
+to the running local TTS server to activate it.
 
 ## Candidate local TTS servers
 
@@ -40,28 +48,30 @@ for Windows/Linux/macOS, has published Swedish ONNX models (`sv_SE-nst-medium`),
 and exposes a simple HTTP server (`--output_file` or `--output_pipe` mode with a
 JSON API wrapper).
 
-## Planned integration steps
+## Integration steps
 
-1. **API route** — add `POST /tts/speak` to `apps/api` that:
+1. **API route** ✓ — `POST /tts/speak` exists in `apps/api/src/routes/tts.ts`:
+   - Disabled by default (`LOCAL_TTS_ENABLED=false`).
+   - When enabled, forwards to `LOCAL_TTS_BASE_URL/speak` (localhost-only).
+   - Returns audio bytes or a JSON error.
+
+2. **Frontend** ✓ — `speakWithLocalTts(text)` in `ChatPanel.tsx` calls the route and plays the audio.
+
+3. **Remaining step — wire a real local TTS server:**
    - Accepts `{ text: string; lang: string; voice?: string }`.
    - Pipes text to a locally running Piper process (or Kokoro).
    - Returns audio as `audio/wav` or `audio/mpeg`.
    - Configurable via `LOCAL_TTS_URL` env var (e.g. `http://localhost:5500`).
 
-2. **Frontend `speakWithLocalTts`** — replace the placeholder with:
-   - `fetch(API_URL + "/tts/speak", { method: "POST", body: JSON.stringify({ text, lang: speechLangRef.current }) })`
-   - Convert the response `Blob` to an `AudioBuffer` via `AudioContext.decodeAudioData`.
-   - Play through `AudioContext.createBufferSource` — no SpeechSynthesis involved.
-   - Wire `setSpeaking(true/false)` around play start/end.
+4. **Voice selector** — when the local provider is active, optionally replace the
+   browser voice `<select>` with a list of available Piper/Kokoro voices fetched
+   from `GET /tts/voices` (a future endpoint).
 
-3. **Voice selector** — when the local provider is active, replace the browser
-   voice `<select>` with a list of available Piper voices fetched from
-   `GET /tts/voices`.
-
-4. **Env vars** needed:
+5. **Env vars needed to activate:**
    ```
-   LOCAL_TTS_URL=http://localhost:5500   # Piper HTTP wrapper
-   LOCAL_TTS_ENGINE=piper                # "piper" | "kokoro"
+   LOCAL_TTS_ENABLED=true
+   LOCAL_TTS_BASE_URL=http://localhost:5005   # Piper HTTP wrapper
+   LOCAL_TTS_PROVIDER=piper                   # informational label
    ```
 
 ## What is NOT changed by this roadmap

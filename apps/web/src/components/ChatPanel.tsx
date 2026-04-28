@@ -752,6 +752,12 @@ export default function ChatPanel({
   // Ref mirrors ttsProvider so the async speakAssistantText always reads the
   // current value even when it changes during a long streaming response.
   const ttsProviderRef = useRef<TtsProvider>(TTS_PROVIDER_DEFAULT);
+  // Holds the active HTMLAudioElement used for local TTS playback.
+  // Replaced on each new local TTS utterance; stopped by stopVoice().
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Holds the current object URL created from a local TTS audio blob.
+  // Revoked after playback ends to avoid memory leaks.
+  const objectUrlRef = useRef<string | null>(null);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -803,7 +809,7 @@ export default function ChatPanel({
   }, [messages, loading]);
 
   // Abort any in-flight streaming request when the component unmounts (e.g. session switch).
-  // Also cancel any ongoing speech recognition or synthesis to avoid background audio.
+  // Also cancel any ongoing speech recognition, browser synthesis, and local TTS audio.
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
@@ -811,6 +817,15 @@ export default function ChatPanel({
       if (speechTimerRef.current !== null) clearTimeout(speechTimerRef.current);
       if (typeof window !== "undefined")
         (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+      // Stop local TTS audio and revoke the object URL to free memory.
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -905,6 +920,7 @@ export default function ChatPanel({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stop speech playback immediately when the user turns off "Speak replies".
+  // Stops both browser SpeechSynthesis and any active local TTS audio element.
   useEffect(() => {
     if (!speakReplies && typeof window !== "undefined") {
       if (speechTimerRef.current !== null) {
@@ -912,6 +928,15 @@ export default function ChatPanel({
         speechTimerRef.current = null;
       }
       (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+      // Stop local TTS audio if it is currently playing.
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
       setSpeaking(false);
       setSpeechError(null);
     }
@@ -1252,12 +1277,75 @@ export default function ChatPanel({
     }, 150);
   }
 
-  // Local TTS placeholder — will route to a local TTS server (Kokoro / Piper) in a future milestone.
-  // For now it surfaces a helpful error so the user knows to switch back to "Browser voice".
-  function speakWithLocalTts(): void {
-    setSpeechError(
-      "Local TTS is not configured yet. Switch to Browser voice in the TTS dropdown to hear replies."
-    );
+  // Stop any active local TTS audio and revoke the associated object URL.
+  // Safe to call even when no audio is playing.
+  function stopLocalAudio(): void {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }
+
+  // Local TTS implementation — calls POST /tts/speak on the Jarvis API.
+  // The API proxies to the local TTS server (Piper/Kokoro) when LOCAL_TTS_ENABLED=true.
+  // Audio bytes are returned and played through HTMLAudioElement so that:
+  //   - The browser never talks directly to the local TTS server.
+  //   - Stopping works via audioRef (same as browser TTS uses speechSynthesis.cancel).
+  // If the API returns a JSON error (e.g. "not enabled"), it is shown in speechError.
+  async function speakWithLocalTts(text: string): Promise<void> {
+    setSpeechError(null);
+    // Stop any audio already playing before starting a new utterance.
+    stopLocalAudio();
+
+    try {
+      const res = await fetch(`${API_URL}/tts/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          lang: speechLangRef.current,
+          // Only send voice if one is explicitly selected — empty string means "default".
+          voice: selectedVoiceNameRef.current || undefined,
+        }),
+      });
+
+      const contentType = res.headers.get("content-type") ?? "";
+
+      if (res.ok && contentType.startsWith("audio/")) {
+        // API returned audio bytes — play them through HTMLAudioElement.
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        objectUrlRef.current = objectUrl;
+
+        const audio = new Audio(objectUrl);
+        audioRef.current = audio;
+
+        audio.onplay = () => setSpeaking(true);
+        audio.onended = () => {
+          setSpeaking(false);
+          stopLocalAudio();
+        };
+        audio.onerror = () => {
+          setSpeaking(false);
+          setSpeechError("Local TTS audio playback failed.");
+          stopLocalAudio();
+        };
+
+        await audio.play();
+      } else {
+        // API returned JSON with an error (e.g. "not enabled", "unreachable").
+        const data = (await res.json()) as { ok: boolean; error?: string };
+        setSpeechError(data.error ?? "Local TTS returned an unexpected response.");
+      }
+    } catch {
+      setSpeechError(
+        "Could not reach the Jarvis API for local TTS — is it running on port 4000?"
+      );
+    }
   }
 
   // Route TTS to the currently selected provider.
@@ -1266,48 +1354,48 @@ export default function ChatPanel({
     if (typeof window === "undefined") return;
     if (!text.trim()) return;
     if (ttsProviderRef.current === "local") {
-      speakWithLocalTts();
+      void speakWithLocalTts(text);
       return;
     }
     speakWithBrowserTts(text);
   }
 
-  // Cancel any in-progress speech and reset the speaking state.
-  // Also clears any pending speech timer so a queued utterance does not play after the stop.
+  // Cancel any in-progress speech (browser or local TTS) and reset the speaking state.
+  // Clears the pending browser speech timer and stops any local TTS audio element.
   function stopVoice(): void {
     if (speechTimerRef.current !== null) {
       clearTimeout(speechTimerRef.current);
       speechTimerRef.current = null;
     }
-    if (typeof window === "undefined") return;
-    (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+    if (typeof window !== "undefined") {
+      (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+    }
+    stopLocalAudio();
     setSpeaking(false);
     setSpeechError(null);
   }
 
   // Speak a short preview phrase using the currently selected language and voice.
   // Lets the user audition voices without sending a chat message.
-  // Uses the same cancel/delay/resume pattern as speakWithBrowserTts; does NOT
-  // check speakRepliesRef — this is an explicit user action, not an auto-reply.
-  // When the local TTS provider is selected the preview is not available and
-  // an informational message is shown instead.
+  // Does NOT check speakRepliesRef — this is an explicit user action, not an auto-reply.
+  // When the local TTS provider is selected, the preview is forwarded to /tts/speak
+  // so the user can hear the configured local server's output (or see the error if not enabled).
   function speakPreview(): void {
     if (typeof window === "undefined") return;
-    if (ttsProvider === "local") {
-      setSpeechError(
-        "Voice preview is not available for Local TTS. Switch to Browser voice to audition voices."
-      );
-      return;
-    }
-    const jw = window as unknown as JarvisWindow;
-    if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
 
-    // Pick the preview phrase for the currently selected language.
-    // speechLang is read directly (click handler — closure is always fresh).
+    // Pick the preview phrase for the currently selected language (fresh closure — always current).
     const phrase =
       VOICE_PREVIEW_PHRASES[speechLang] ??
       VOICE_PREVIEW_PHRASES["en-US"] ??
       "Jarvis voice preview.";
+
+    if (ttsProvider === "local") {
+      void speakWithLocalTts(phrase);
+      return;
+    }
+
+    const jw = window as unknown as JarvisWindow;
+    if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
 
     // Cancel any pending timer or ongoing speech before starting the preview.
     if (speechTimerRef.current !== null) {
@@ -1957,10 +2045,6 @@ export default function ChatPanel({
                     </option>
                   ))}
                 </select>
-                {/* Planned badge — visible when "Local TTS" is selected to make clear it is not yet active */}
-                {ttsProvider === "local" && (
-                  <span className="text-xs text-amber-700/70 italic">not yet active</span>
-                )}
               </div>
             )}
 

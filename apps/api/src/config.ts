@@ -11,6 +11,31 @@ const defaultDbPath = path.join(projectRoot, "data/memory/jarvis.sqlite");
 // Override with JARVIS_ALLOWED_WORKSPACE (absolute or relative to cwd)
 const defaultWorkspace = path.join(projectRoot, "workspace");
 
+// Safety guard: LOCAL_TTS_BASE_URL must point to localhost/127.0.0.1/::1.
+// Arbitrary outbound URLs would turn the /tts/speak route into an open proxy.
+// Falls back to the default and emits a console warning if the value is rejected.
+const LOCAL_TTS_BASE_URL_DEFAULT = "http://localhost:5005";
+
+function ensureLocalhost(rawUrl: string, fallback: string): string {
+  try {
+    const { hostname } = new URL(rawUrl);
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1"
+    ) {
+      return rawUrl;
+    }
+  } catch {
+    // Malformed URL — fall through to the fallback
+  }
+  console.warn(
+    `[Jarvis] LOCAL_TTS_BASE_URL must point to localhost or 127.0.0.1. ` +
+      `Ignoring configured value, using default ${fallback}`
+  );
+  return fallback;
+}
+
 export const config = {
   port: Number(process.env.PORT) || 4000,
   corsOrigin: process.env.CORS_ORIGIN || "http://localhost:3000",
@@ -24,4 +49,15 @@ export const config = {
   allowedWorkspace: process.env.JARVIS_ALLOWED_WORKSPACE
     ? path.resolve(process.env.JARVIS_ALLOWED_WORKSPACE)
     : defaultWorkspace,
+  // Local TTS server — optional, disabled by default.
+  // Only localhost URLs are accepted (see ensureLocalhost above).
+  // Piper/Kokoro or any compatible local HTTP TTS server can be configured here.
+  localTts: {
+    enabled: process.env.LOCAL_TTS_ENABLED === "true",
+    baseUrl: ensureLocalhost(
+      process.env.LOCAL_TTS_BASE_URL ?? LOCAL_TTS_BASE_URL_DEFAULT,
+      LOCAL_TTS_BASE_URL_DEFAULT
+    ),
+    provider: process.env.LOCAL_TTS_PROVIDER || "generic",
+  },
 } as const;

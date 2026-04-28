@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.5.3)
+## What Jarvis can do right now (v0.5.4)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -35,6 +35,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Speech language selector (v0.5.1)** — a compact voice bar below the input shows a language dropdown with Swedish (sv-SE) and English (en-US). The selected language is used for both mic recognition and TTS utterances. Selection persists across page reloads via localStorage. Default is Swedish (sv-SE). Voice controls (language, TTS toggle, speaking status) are grouped in this bar and only shown when the browser supports at least one voice API.
 - **Browser voice selector (v0.5.2)** — a second dropdown in the voice bar lists all voices installed on the OS and/or bundled with the browser (via `speechSynthesis.getVoices()`). The selected voice is applied to every TTS utterance. A "Test voice" button speaks a short preview phrase (language-aware) so the user can audition voices before committing. The selection persists via localStorage. No external TTS services used.
 - **TTS provider abstraction (v0.5.3)** — a "TTS:" dropdown in the voice bar lets you select between "Browser voice" (Web SpeechSynthesis, default) and "Local TTS (planned)" (future Piper/Kokoro integration). The speak logic is split into `speakWithBrowserTts` and `speakWithLocalTts` so the routing is clean. Local TTS is not yet active — selecting it shows a "not yet active" note and a friendly error on voice replies. Selection persists via localStorage.
+- **Local TTS HTTP provider foundation (v0.5.4)** — the Jarvis API now exposes `POST /tts/speak` which proxies to a local TTS server (Piper, Kokoro, or any compatible server). Disabled by default (`LOCAL_TTS_ENABLED=false`). Only `localhost` upstream URLs are accepted — remote URLs are rejected at startup. The frontend calls the Jarvis API (never the TTS server directly) and plays returned audio bytes through `HTMLAudioElement`. Stop voice and Voice replies toggle cancel local audio. No Piper/Kokoro binaries are installed by this change. Set `LOCAL_TTS_ENABLED=true` and `LOCAL_TTS_BASE_URL=http://localhost:5005` in `apps/api/.env` when a local TTS server is running.
 
 ## Prerequisites
 
