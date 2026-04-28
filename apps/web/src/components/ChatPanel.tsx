@@ -456,6 +456,19 @@ const VOICE_PREVIEW_PHRASES: Record<string, string> = {
   "sv-SE": "Hej Jimmy. Detta är en röstförhandsvisning.",
 };
 
+// localStorage key for the selected TTS provider.
+const VOICE_PROVIDER_KEY = "jarvis.voice.provider.v1";
+
+// Valid TTS provider identifiers.
+// "browser"  — web SpeechSynthesis API (default, always available)
+// "local"    — planned: local TTS server such as Kokoro or Piper (not yet active)
+type TtsProvider = "browser" | "local";
+const TTS_PROVIDER_OPTIONS: { value: TtsProvider; label: string }[] = [
+  { value: "browser", label: "Browser voice" },
+  { value: "local",   label: "Local TTS (planned)" },
+];
+const TTS_PROVIDER_DEFAULT: TtsProvider = "browser";
+
 const DEFAULT_GREETING: ChatMessage = {
   role: "assistant",
   text: "Hello. I am Jarvis — your local AI assistant. Type a message below to get started.",
@@ -733,6 +746,12 @@ export default function ChatPanel({
   const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
   // Ref mirrors selectedVoiceName for use inside speakAssistantText setTimeout.
   const selectedVoiceNameRef = useRef<string>("");
+  // Which TTS engine is selected — "browser" or "local" (planned).
+  // Initialized to the default; overwritten from localStorage after mount.
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>(TTS_PROVIDER_DEFAULT);
+  // Ref mirrors ttsProvider so the async speakAssistantText always reads the
+  // current value even when it changes during a long streaming response.
+  const ttsProviderRef = useRef<TtsProvider>(TTS_PROVIDER_DEFAULT);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -796,21 +815,27 @@ export default function ChatPanel({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect Web Speech API and SpeechSynthesis support after mount (SSR-safe).
-  // Also restores the saved speech language from localStorage.
+  // Also restores the saved speech language and TTS provider from localStorage.
   // All window access goes through the JarvisWindow cast (see type shims at top of file).
   useEffect(() => {
     const jw = window as unknown as JarvisWindow;
     setVoiceSupported(!!(jw.SpeechRecognition ?? jw.webkitSpeechRecognition));
     setTtsSupported(!!jw.speechSynthesis);
-    // Restore saved language — only accept known option values to prevent stale data.
     try {
-      const saved = localStorage.getItem(VOICE_LANG_KEY);
-      if (saved && VOICE_LANG_OPTIONS.some((o) => o.value === saved)) {
-        setSpeechLang(saved);
-        speechLangRef.current = saved;
+      // Restore saved language — only accept known option values.
+      const savedLang = localStorage.getItem(VOICE_LANG_KEY);
+      if (savedLang && VOICE_LANG_OPTIONS.some((o) => o.value === savedLang)) {
+        setSpeechLang(savedLang);
+        speechLangRef.current = savedLang;
+      }
+      // Restore saved TTS provider — only accept known option values.
+      const savedProvider = localStorage.getItem(VOICE_PROVIDER_KEY) as TtsProvider | null;
+      if (savedProvider && TTS_PROVIDER_OPTIONS.some((o) => o.value === savedProvider)) {
+        setTtsProvider(savedProvider);
+        ttsProviderRef.current = savedProvider;
       }
     } catch {
-      // localStorage unavailable — keep default
+      // localStorage unavailable — keep defaults
     }
   }, []);
 
@@ -832,6 +857,13 @@ export default function ChatPanel({
   useEffect(() => {
     selectedVoiceNameRef.current = selectedVoiceName;
   }, [selectedVoiceName]);
+
+  // Keep ttsProviderRef in sync with the ttsProvider state so that
+  // speakAssistantText (inside a setTimeout) always reads the current value.
+  // localStorage writes happen only in the <select> onChange handler.
+  useEffect(() => {
+    ttsProviderRef.current = ttsProvider;
+  }, [ttsProvider]);
 
   // Load available browser/system voices and restore the saved voice preference.
   //
@@ -1158,7 +1190,9 @@ export default function ChatPanel({
     }
   }
 
-  // Speak text via the browser SpeechSynthesis API.
+  // ── TTS provider implementations ─────────────────────────────────────────────
+
+  // Browser TTS implementation — wraps the Web SpeechSynthesis API.
   //
   // Chrome/Edge bugs addressed here:
   //
@@ -1173,9 +1207,7 @@ export default function ChatPanel({
   //
   // 3. Stale closure on speakReplies toggle — the delay re-checks speakRepliesRef
   //    so a toggle-off during the 150 ms window correctly cancels the speak.
-  function speakAssistantText(text: string): void {
-    if (typeof window === "undefined") return;
-    if (!text.trim()) return;
+  function speakWithBrowserTts(text: string): void {
     const jw = window as unknown as JarvisWindow;
     if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
 
@@ -1220,6 +1252,26 @@ export default function ChatPanel({
     }, 150);
   }
 
+  // Local TTS placeholder — will route to a local TTS server (Kokoro / Piper) in a future milestone.
+  // For now it surfaces a helpful error so the user knows to switch back to "Browser voice".
+  function speakWithLocalTts(): void {
+    setSpeechError(
+      "Local TTS is not configured yet. Switch to Browser voice in the TTS dropdown to hear replies."
+    );
+  }
+
+  // Route TTS to the currently selected provider.
+  // All call sites use this function — provider switching is transparent to callers.
+  function speakAssistantText(text: string): void {
+    if (typeof window === "undefined") return;
+    if (!text.trim()) return;
+    if (ttsProviderRef.current === "local") {
+      speakWithLocalTts();
+      return;
+    }
+    speakWithBrowserTts(text);
+  }
+
   // Cancel any in-progress speech and reset the speaking state.
   // Also clears any pending speech timer so a queued utterance does not play after the stop.
   function stopVoice(): void {
@@ -1235,10 +1287,18 @@ export default function ChatPanel({
 
   // Speak a short preview phrase using the currently selected language and voice.
   // Lets the user audition voices without sending a chat message.
-  // Uses the same cancel/delay/resume pattern as speakAssistantText; does NOT
+  // Uses the same cancel/delay/resume pattern as speakWithBrowserTts; does NOT
   // check speakRepliesRef — this is an explicit user action, not an auto-reply.
+  // When the local TTS provider is selected the preview is not available and
+  // an informational message is shown instead.
   function speakPreview(): void {
     if (typeof window === "undefined") return;
+    if (ttsProvider === "local") {
+      setSpeechError(
+        "Voice preview is not available for Local TTS. Switch to Browser voice to audition voices."
+      );
+      return;
+    }
     const jw = window as unknown as JarvisWindow;
     if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
 
@@ -1865,11 +1925,44 @@ export default function ChatPanel({
         </div>
 
         {/* Voice bar — only shown when the browser supports at least one voice API.
+            Row 0: TTS provider selector (browser vs local)
             Row 1: speech language + TTS toggle / speaking status
             Row 2: voice selector + Test voice button (TTS only)
             Row 3: status messages */}
         {(voiceSupported || ttsSupported) && (
           <div className="mt-2 pt-2 border-t border-slate-800/60 space-y-1.5">
+
+            {/* Row 0: TTS provider — only shown when TTS is supported */}
+            {ttsSupported && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-700">TTS:</span>
+                <select
+                  value={ttsProvider}
+                  onChange={(e) => {
+                    const provider = e.target.value as TtsProvider;
+                    setTtsProvider(provider);
+                    // Write immediately in the handler — do not use a useEffect that
+                    // would fire on first mount and overwrite the saved preference.
+                    ttsProviderRef.current = provider;
+                    try { localStorage.setItem(VOICE_PROVIDER_KEY, provider); } catch {}
+                    // Clear any lingering provider-related error on switch
+                    setSpeechError(null);
+                  }}
+                  title="Text-to-speech engine"
+                  className="text-xs bg-slate-800/60 border border-slate-700/60 text-slate-400 rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-500/40 cursor-pointer"
+                >
+                  {TTS_PROVIDER_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {/* Planned badge — visible when "Local TTS" is selected to make clear it is not yet active */}
+                {ttsProvider === "local" && (
+                  <span className="text-xs text-amber-700/70 italic">not yet active</span>
+                )}
+              </div>
+            )}
 
             {/* Row 1: language + TTS toggle */}
             <div className="flex items-center justify-between gap-3">
