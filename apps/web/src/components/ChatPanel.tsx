@@ -42,6 +42,7 @@ interface JarvisRecognition {
 type JarvisRecognitionCtor = new () => JarvisRecognition;
 
 interface JarvisUtterance {
+  lang: string;
   onstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
@@ -49,7 +50,9 @@ interface JarvisUtterance {
 type JarvisUtteranceCtor = new (text: string) => JarvisUtterance;
 
 interface JarvisSpeechSynthesis {
+  readonly paused: boolean;
   cancel(): void;
+  resume(): void;
   speak(utterance: JarvisUtterance): void;
 }
 
@@ -424,6 +427,16 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 const STORAGE_KEY = "jarvis.chat.v1";
 // localStorage key for the active backend session id
 const SESSION_STORAGE_KEY = "jarvis.session.v1";
+// localStorage key for the preferred voice/speech language
+const VOICE_LANG_KEY = "jarvis.voice.lang.v1";
+
+// Supported speech languages — used for both SpeechRecognition.lang and SpeechSynthesisUtterance.lang.
+// Keep in sync with the <select> options in the voice bar JSX below.
+const VOICE_LANG_OPTIONS: { value: string; label: string }[] = [
+  { value: "sv-SE", label: "Swedish (sv-SE)" },
+  { value: "en-US", label: "English (en-US)" },
+];
+const VOICE_LANG_DEFAULT = "sv-SE";
 
 const DEFAULT_GREETING: ChatMessage = {
   role: "assistant",
@@ -686,6 +699,15 @@ export default function ChatPanel({
   // Ref that mirrors speakReplies — lets the async send() read the current
   // toggle value after a long streaming gap without capturing a stale closure.
   const speakRepliesRef = useRef(false);
+  // Holds the pending setTimeout id from speakAssistantText so it can be
+  // cancelled if stopVoice or a toggle-off arrives before the delay expires.
+  const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Selected speech language — used for both SpeechRecognition.lang and utterance.lang.
+  // Initialized to the default; overwritten from localStorage after mount.
+  const [speechLang, setSpeechLang] = useState<string>(VOICE_LANG_DEFAULT);
+  // Ref mirrors speechLang so the setTimeout inside speakAssistantText always uses
+  // the current value even when the user changes language mid-response.
+  const speechLangRef = useRef<string>(VOICE_LANG_DEFAULT);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -742,17 +764,29 @@ export default function ChatPanel({
     return () => {
       abortControllerRef.current?.abort();
       recognitionRef.current?.abort();
+      if (speechTimerRef.current !== null) clearTimeout(speechTimerRef.current);
       if (typeof window !== "undefined")
         (window as unknown as JarvisWindow).speechSynthesis?.cancel();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect Web Speech API and SpeechSynthesis support after mount (SSR-safe).
+  // Also restores the saved speech language from localStorage.
   // All window access goes through the JarvisWindow cast (see type shims at top of file).
   useEffect(() => {
     const jw = window as unknown as JarvisWindow;
     setVoiceSupported(!!(jw.SpeechRecognition ?? jw.webkitSpeechRecognition));
     setTtsSupported(!!jw.speechSynthesis);
+    // Restore saved language — only accept known option values to prevent stale data.
+    try {
+      const saved = localStorage.getItem(VOICE_LANG_KEY);
+      if (saved && VOICE_LANG_OPTIONS.some((o) => o.value === saved)) {
+        setSpeechLang(saved);
+        speechLangRef.current = saved;
+      }
+    } catch {
+      // localStorage unavailable — keep default
+    }
   }, []);
 
   // Keep the ref in sync with the toggle state so the async send() always reads
@@ -761,9 +795,21 @@ export default function ChatPanel({
     speakRepliesRef.current = speakReplies;
   }, [speakReplies]);
 
+  // Keep speechLangRef in sync with the speechLang state so that
+  // speakAssistantText (which runs inside a setTimeout) always reads the
+  // current value.  localStorage writes happen only in the <select> onChange
+  // handler below to avoid overwriting a saved value on first mount.
+  useEffect(() => {
+    speechLangRef.current = speechLang;
+  }, [speechLang]);
+
   // Stop speech playback immediately when the user turns off "Speak replies".
   useEffect(() => {
     if (!speakReplies && typeof window !== "undefined") {
+      if (speechTimerRef.current !== null) {
+        clearTimeout(speechTimerRef.current);
+        speechTimerRef.current = null;
+      }
       (window as unknown as JarvisWindow).speechSynthesis?.cancel();
       setSpeaking(false);
       setSpeechError(null);
@@ -990,7 +1036,7 @@ export default function ChatPanel({
     const recognition = new SpeechRecognitionCtor();
     recognition.continuous = false;    // Stop after the first utterance
     recognition.interimResults = false; // Only final results
-    recognition.lang = "en-US";
+    recognition.lang = speechLang;     // User-selected language
 
     recognition.onstart = () => {
       setVoiceListening(true);
@@ -1044,23 +1090,50 @@ export default function ChatPanel({
   }
 
   // Speak text via the browser SpeechSynthesis API.
-  // Applies a 150 ms delay after cancel() to work around a Chrome/Edge bug where
-  // cancel() followed by an immediate speak() silently fails when the queue was
-  // previously non-empty.  The delay also re-checks speakRepliesRef so that a
-  // toggle-off during the delay correctly skips the utterance.
+  //
+  // Chrome/Edge bugs addressed here:
+  //
+  // 1. cancel() + immediate speak() race — calling cancel() followed by speak()
+  //    without a delay silently drops the utterance when the queue was non-empty.
+  //    Fixed with a 150 ms setTimeout.
+  //
+  // 2. Engine paused after first utterance (crbug/671211) — after any utterance
+  //    finishes naturally, Chrome sets speechSynthesis.paused = true and will not
+  //    play subsequent utterances.  Fixed by calling resume() before speak() when
+  //    the engine reports itself as paused.
+  //
+  // 3. Stale closure on speakReplies toggle — the delay re-checks speakRepliesRef
+  //    so a toggle-off during the 150 ms window correctly cancels the speak.
   function speakAssistantText(text: string): void {
     if (typeof window === "undefined") return;
     if (!text.trim()) return;
     const jw = window as unknown as JarvisWindow;
     if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
+
+    // Cancel any pending timer from a previous call so we do not double-speak.
+    if (speechTimerRef.current !== null) {
+      clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+
     setSpeechError(null);
     jw.speechSynthesis.cancel();
-    // Delay lets the synthesis queue flush (Chrome/Edge bug workaround).
-    setTimeout(() => {
+
+    // Delay lets the synthesis queue flush before we speak (Chrome bug #1 workaround).
+    speechTimerRef.current = setTimeout(() => {
+      speechTimerRef.current = null;
       if (!speakRepliesRef.current) return; // user toggled off during the delay
       const jwLate = window as unknown as JarvisWindow;
       if (!jwLate.speechSynthesis || !jwLate.SpeechSynthesisUtterance) return;
+
+      // Resume the engine if it paused after the previous utterance ended
+      // (Chrome bug #2 workaround — engine stays paused after onend fires).
+      if (jwLate.speechSynthesis.paused) {
+        jwLate.speechSynthesis.resume();
+      }
+
       const utterance = new jwLate.SpeechSynthesisUtterance(text);
+      utterance.lang = speechLangRef.current; // user-selected language, always current via ref
       utterance.onstart = () => setSpeaking(true);
       utterance.onend = () => setSpeaking(false);
       utterance.onerror = () => {
@@ -1072,7 +1145,12 @@ export default function ChatPanel({
   }
 
   // Cancel any in-progress speech and reset the speaking state.
+  // Also clears any pending speech timer so a queued utterance does not play after the stop.
   function stopVoice(): void {
+    if (speechTimerRef.current !== null) {
+      clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
     if (typeof window === "undefined") return;
     (window as unknown as JarvisWindow).speechSynthesis?.cancel();
     setSpeaking(false);
@@ -1660,45 +1738,85 @@ export default function ChatPanel({
           <p className="text-xs text-slate-700">
             Enter to send · Shift+Enter for new line
           </p>
-          {/* TTS toggle — only shown when the browser supports speechSynthesis */}
-          {ttsSupported && (
-            <button
-              type="button"
-              onClick={() => setSpeakReplies((v) => !v)}
-              title={speakReplies ? "Disable voice replies" : "Enable voice replies"}
-              className={`text-xs transition-colors ${
-                speakReplies
-                  ? "text-cyan-500/80 hover:text-cyan-400"
-                  : "text-slate-700 hover:text-slate-500"
-              }`}
-            >
-              {speakReplies ? "Voice replies: on" : "Voice replies: off"}
-            </button>
-          )}
         </div>
-        {/* Voice status lines — only rendered when relevant */}
-        {voiceListening && (
-          <p className="text-xs text-red-400 text-center mt-1 animate-pulse">
-            Listening…
-          </p>
-        )}
-        {!voiceListening && voiceError && (
-          <p className="text-xs text-red-500/70 text-center mt-1">{voiceError}</p>
-        )}
-        {speaking && (
-          <div className="flex items-center justify-center gap-3 mt-1">
-            <p className="text-xs text-cyan-600/70 animate-pulse">Speaking…</p>
-            <button
-              type="button"
-              onClick={stopVoice}
-              className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
-            >
-              Stop voice
-            </button>
+
+        {/* Voice bar — only shown when the browser supports at least one voice API.
+            Contains: speech language selector | mic status | TTS toggle / speaking status. */}
+        {(voiceSupported || ttsSupported) && (
+          <div className="mt-2 pt-2 border-t border-slate-800/60 space-y-1">
+            {/* Controls row */}
+            <div className="flex items-center justify-between gap-3">
+              {/* Left: speech language selector */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-slate-700">Speech:</span>
+                <select
+                  value={speechLang}
+                  onChange={(e) => {
+                    const lang = e.target.value;
+                    setSpeechLang(lang);
+                    // Write immediately — do not rely on a useEffect that would also
+                    // fire on first mount and overwrite the previously saved value.
+                    speechLangRef.current = lang;
+                    try { localStorage.setItem(VOICE_LANG_KEY, lang); } catch {}
+                  }}
+                  title="Speech language for microphone input and voice replies"
+                  className="text-xs bg-slate-800/60 border border-slate-700/60 text-slate-400 rounded px-1.5 py-0.5 focus:outline-none focus:border-cyan-500/40 cursor-pointer"
+                >
+                  {VOICE_LANG_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Right: TTS toggle or speaking status */}
+              {ttsSupported && (
+                <div className="flex items-center gap-2">
+                  {speaking ? (
+                    <>
+                      <span className="text-xs text-cyan-600/70 animate-pulse">
+                        Speaking…
+                      </span>
+                      <button
+                        type="button"
+                        onClick={stopVoice}
+                        className="text-xs text-slate-500 hover:text-slate-300 border border-slate-600/40 rounded px-2 py-0.5 hover:border-slate-500/60 transition-colors"
+                      >
+                        Stop voice
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setSpeakReplies((v) => !v)}
+                      title={speakReplies ? "Disable voice replies" : "Enable voice replies"}
+                      className={`text-xs transition-colors ${
+                        speakReplies
+                          ? "text-cyan-500/80 hover:text-cyan-400"
+                          : "text-slate-700 hover:text-slate-500"
+                      }`}
+                    >
+                      Voice replies: {speakReplies ? "on" : "off"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Status row — mic listening / voice errors / speech errors */}
+            {voiceListening && (
+              <p className="text-xs text-red-400 text-center animate-pulse">
+                Listening…
+              </p>
+            )}
+            {!voiceListening && voiceError && (
+              <p className="text-xs text-red-500/70 text-center">{voiceError}</p>
+            )}
+            {!speaking && speechError && (
+              <p className="text-xs text-red-500/70 text-center">{speechError}</p>
+            )}
           </div>
-        )}
-        {!speaking && speechError && (
-          <p className="text-xs text-red-500/70 text-center mt-1">{speechError}</p>
         )}
       </form>
     </div>
