@@ -2,6 +2,66 @@
 
 import { useState, useRef, useEffect, FormEvent } from "react";
 
+// ─── Local speech API type shims ──────────────────────────────────────────────
+//
+// TypeScript 5.9 + Next.js 14 does not expose SpeechRecognition or
+// SpeechSynthesis as global types in its build-time type checker.
+// We define the minimal shapes we need locally so the code compiles without
+// relying on DOM lib globals that may or may not be present.
+// All runtime access goes through the JarvisWindow intersection cast.
+
+interface JarvisRecognitionAlternative {
+  readonly transcript: string;
+}
+interface JarvisRecognitionResult {
+  readonly length: number;
+  [index: number]: JarvisRecognitionAlternative;
+}
+interface JarvisRecognitionResultList {
+  readonly length: number;
+  [index: number]: JarvisRecognitionResult;
+}
+interface JarvisRecognitionEvent {
+  readonly results: JarvisRecognitionResultList;
+}
+interface JarvisRecognitionErrorEvent {
+  readonly error: string;
+}
+interface JarvisRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: JarvisRecognitionEvent) => void) | null;
+  onerror: ((event: JarvisRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+type JarvisRecognitionCtor = new () => JarvisRecognition;
+
+interface JarvisUtterance {
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+type JarvisUtteranceCtor = new (text: string) => JarvisUtterance;
+
+interface JarvisSpeechSynthesis {
+  cancel(): void;
+  speak(utterance: JarvisUtterance): void;
+}
+
+// Runtime window type carrying all Speech API properties.
+// Used exclusively for runtime casts — never inferred or widened.
+type JarvisWindow = Window & {
+  SpeechRecognition?: JarvisRecognitionCtor;
+  webkitSpeechRecognition?: JarvisRecognitionCtor;
+  speechSynthesis?: JarvisSpeechSynthesis;
+  SpeechSynthesisUtterance?: JarvisUtteranceCtor;
+};
+
 // ─── Write proposal types (mirrors WorkspacePanel) ────────────────────────────
 
 type DiffLine = {
@@ -604,6 +664,29 @@ export default function ChatPanel({
   // Set when the clipboard write fails — shown inline so the user can react.
   const [chatCopyError, setChatCopyError] = useState<string | null>(null);
 
+  // ── Voice input state (Web Speech API) ───────────────────────────────────
+  // Whether the browser supports SpeechRecognition — set after mount to avoid SSR mismatch.
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  // true while the microphone is actively listening for speech.
+  const [voiceListening, setVoiceListening] = useState(false);
+  // Set when recognition fails or mic permission is denied.
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Holds the active SpeechRecognition instance so it can be stopped on demand.
+  const recognitionRef = useRef<JarvisRecognition | null>(null);
+
+  // ── Text-to-speech state (SpeechSynthesis API) ────────────────────────────
+  // Whether the browser supports speechSynthesis — set after mount.
+  const [ttsSupported, setTtsSupported] = useState(false);
+  // User-controlled toggle — off by default, persists only within the session.
+  const [speakReplies, setSpeakReplies] = useState(false);
+  // true while speechSynthesis is currently speaking an utterance.
+  const [speaking, setSpeaking] = useState(false);
+  // Set when speechSynthesis.speak() fires an error event.
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  // Ref that mirrors speakReplies — lets the async send() read the current
+  // toggle value after a long streaming gap without capturing a stale closure.
+  const speakRepliesRef = useRef(false);
+
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
   useEffect(() => {
@@ -654,11 +737,38 @@ export default function ChatPanel({
   }, [messages, loading]);
 
   // Abort any in-flight streaming request when the component unmounts (e.g. session switch).
+  // Also cancel any ongoing speech recognition or synthesis to avoid background audio.
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
+      recognitionRef.current?.abort();
+      if (typeof window !== "undefined")
+        (window as unknown as JarvisWindow).speechSynthesis?.cancel();
     };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detect Web Speech API and SpeechSynthesis support after mount (SSR-safe).
+  // All window access goes through the JarvisWindow cast (see type shims at top of file).
+  useEffect(() => {
+    const jw = window as unknown as JarvisWindow;
+    setVoiceSupported(!!(jw.SpeechRecognition ?? jw.webkitSpeechRecognition));
+    setTtsSupported(!!jw.speechSynthesis);
   }, []);
+
+  // Keep the ref in sync with the toggle state so the async send() always reads
+  // the current value even when speakReplies changed during a long streaming gap.
+  useEffect(() => {
+    speakRepliesRef.current = speakReplies;
+  }, [speakReplies]);
+
+  // Stop speech playback immediately when the user turns off "Speak replies".
+  useEffect(() => {
+    if (!speakReplies && typeof window !== "undefined") {
+      (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+      setSpeaking(false);
+      setSpeechError(null);
+    }
+  }, [speakReplies]);
 
   // Apply a prefilled question from "Ask Jarvis about this file".
   // Runs once when prefillInput changes from null to a string, then the parent
@@ -854,6 +964,121 @@ export default function ChatPanel({
     }
   }
 
+  // Start or stop microphone voice input using the browser Web Speech API.
+  // Recognized speech is appended to the chat input; nothing is sent automatically.
+  // Microphone is only active while the user has the session open and clicked this button.
+  function toggleVoiceInput(): void {
+    // If currently listening, stop recognition
+    if (voiceListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    // Check support at call time (voiceSupported state covers the common case, but
+    // the runtime check is the real guard since this runs in the browser).
+    // All window access goes through the JarvisWindow cast (see type shims above).
+    const jw = window as unknown as JarvisWindow;
+    const SpeechRecognitionCtor: JarvisRecognitionCtor | undefined =
+      jw.SpeechRecognition ?? jw.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setVoiceError("Voice input is not supported in this browser.");
+      return;
+    }
+
+    setVoiceError(null);
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = false;    // Stop after the first utterance
+    recognition.interimResults = false; // Only final results
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      setVoiceListening(true);
+    };
+
+    recognition.onresult = (event: JarvisRecognitionEvent) => {
+      if (event.results.length > 0 && event.results[0].length > 0) {
+        const transcript = event.results[0][0].transcript.trim();
+        if (transcript) {
+          // Append to existing input (or replace if empty)
+          setInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
+          // Sync textarea height to the new content
+          if (textareaRef.current) {
+            textareaRef.current.style.height = "auto";
+            textareaRef.current.style.height = `${Math.min(
+              textareaRef.current.scrollHeight,
+              200
+            )}px`;
+          }
+        }
+      }
+    };
+
+    recognition.onerror = (event: JarvisRecognitionErrorEvent) => {
+      if (event.error === "not-allowed") {
+        setVoiceError("Microphone permission denied.");
+      } else if (event.error === "no-speech") {
+        // No speech was detected — clear any previous error, just end quietly
+        setVoiceError(null);
+      } else if (event.error === "aborted") {
+        // User-initiated stop — not an error
+        setVoiceError(null);
+      } else {
+        setVoiceError(`Voice recognition error: ${event.error}`);
+      }
+      setVoiceListening(false);
+    };
+
+    recognition.onend = () => {
+      setVoiceListening(false);
+    };
+
+    recognitionRef.current = recognition;
+
+    try {
+      recognition.start();
+    } catch {
+      setVoiceError("Failed to start voice recognition.");
+      setVoiceListening(false);
+    }
+  }
+
+  // Speak text via the browser SpeechSynthesis API.
+  // Applies a 150 ms delay after cancel() to work around a Chrome/Edge bug where
+  // cancel() followed by an immediate speak() silently fails when the queue was
+  // previously non-empty.  The delay also re-checks speakRepliesRef so that a
+  // toggle-off during the delay correctly skips the utterance.
+  function speakAssistantText(text: string): void {
+    if (typeof window === "undefined") return;
+    if (!text.trim()) return;
+    const jw = window as unknown as JarvisWindow;
+    if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
+    setSpeechError(null);
+    jw.speechSynthesis.cancel();
+    // Delay lets the synthesis queue flush (Chrome/Edge bug workaround).
+    setTimeout(() => {
+      if (!speakRepliesRef.current) return; // user toggled off during the delay
+      const jwLate = window as unknown as JarvisWindow;
+      if (!jwLate.speechSynthesis || !jwLate.SpeechSynthesisUtterance) return;
+      const utterance = new jwLate.SpeechSynthesisUtterance(text);
+      utterance.onstart = () => setSpeaking(true);
+      utterance.onend = () => setSpeaking(false);
+      utterance.onerror = () => {
+        setSpeaking(false);
+        setSpeechError("Voice playback failed — check browser permissions.");
+      };
+      jwLate.speechSynthesis.speak(utterance);
+    }, 150);
+  }
+
+  // Cancel any in-progress speech and reset the speaking state.
+  function stopVoice(): void {
+    if (typeof window === "undefined") return;
+    (window as unknown as JarvisWindow).speechSynthesis?.cancel();
+    setSpeaking(false);
+    setSpeechError(null);
+  }
+
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
@@ -868,6 +1093,7 @@ export default function ChatPanel({
     setChatApprovedContent(null);
     setChatCopied(false);
     setChatCopyError(null);
+    setSpeechError(null);
 
     // Snapshot and immediately clear the attachment so it cannot be sent twice
     const attachmentSnapshot = attachment ?? null;
@@ -1002,6 +1228,18 @@ export default function ChatPanel({
         if (sid !== null) void persistMessage(sid, "assistant", assistantText, modelName);
         // Scan for a jarvis-write-proposal block and create a pending proposal if found
         void detectAndPropose(assistantText);
+        // Speak the response when the user has voice replies enabled.
+        // Uses speakRepliesRef (not the closure-captured speakReplies state) so that
+        // a toggle-off during a long streaming response is respected.
+        // Proposal responses are replaced with a short safe summary so raw JSON is
+        // never read aloud.
+        if (speakRepliesRef.current) {
+          const proposalMatch = matchProposalBlock(assistantText);
+          const textToSpeak = proposalMatch
+            ? "Jarvis proposed a workspace file change. Review it before approving."
+            : assistantText;
+          speakAssistantText(textToSpeak);
+        }
       }
     } catch (err: unknown) {
       // User-initiated abort — not an error
@@ -1368,6 +1606,33 @@ export default function ChatPanel({
             className="flex-1 resize-none rounded-lg bg-slate-800/60 border border-slate-700 px-4 py-3 text-sm text-slate-200 leading-relaxed placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           />
 
+          {/* Mic button — activates browser speech recognition; fills the chat input with
+              recognized speech.  Never sends automatically.  Hidden while a response is
+              streaming (the input is disabled then, so voice input is irrelevant). */}
+          {!loading && (
+            <button
+              type="button"
+              onClick={toggleVoiceInput}
+              aria-label={voiceListening ? "Stop listening" : "Voice input"}
+              title={
+                !voiceSupported
+                  ? "Voice input is not supported in this browser"
+                  : voiceListening
+                  ? "Stop listening"
+                  : "Voice input"
+              }
+              className={`flex-shrink-0 px-3 py-3 rounded-lg text-sm border transition-colors ${
+                voiceListening
+                  ? "bg-red-500/20 text-red-400 border-red-500/30 animate-pulse"
+                  : voiceSupported
+                  ? "bg-slate-700/40 text-slate-500 border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-300"
+                  : "bg-slate-800/40 text-slate-700 border-slate-700/30 cursor-not-allowed"
+              }`}
+            >
+              {voiceListening ? "■" : "Mic"}
+            </button>
+          )}
+
           {/* Stop button — always rendered to prevent layout shift; invisible when idle */}
           <button
             type="button"
@@ -1391,9 +1656,50 @@ export default function ChatPanel({
             Send
           </button>
         </div>
-        <p className="text-xs text-slate-700 mt-2 text-center">
-          Enter to send · Shift+Enter for new line
-        </p>
+        <div className="flex items-center justify-between mt-2">
+          <p className="text-xs text-slate-700">
+            Enter to send · Shift+Enter for new line
+          </p>
+          {/* TTS toggle — only shown when the browser supports speechSynthesis */}
+          {ttsSupported && (
+            <button
+              type="button"
+              onClick={() => setSpeakReplies((v) => !v)}
+              title={speakReplies ? "Disable voice replies" : "Enable voice replies"}
+              className={`text-xs transition-colors ${
+                speakReplies
+                  ? "text-cyan-500/80 hover:text-cyan-400"
+                  : "text-slate-700 hover:text-slate-500"
+              }`}
+            >
+              {speakReplies ? "Voice replies: on" : "Voice replies: off"}
+            </button>
+          )}
+        </div>
+        {/* Voice status lines — only rendered when relevant */}
+        {voiceListening && (
+          <p className="text-xs text-red-400 text-center mt-1 animate-pulse">
+            Listening…
+          </p>
+        )}
+        {!voiceListening && voiceError && (
+          <p className="text-xs text-red-500/70 text-center mt-1">{voiceError}</p>
+        )}
+        {speaking && (
+          <div className="flex items-center justify-center gap-3 mt-1">
+            <p className="text-xs text-cyan-600/70 animate-pulse">Speaking…</p>
+            <button
+              type="button"
+              onClick={stopVoice}
+              className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+            >
+              Stop voice
+            </button>
+          </div>
+        )}
+        {!speaking && speechError && (
+          <p className="text-xs text-red-500/70 text-center mt-1">{speechError}</p>
+        )}
       </form>
     </div>
   );

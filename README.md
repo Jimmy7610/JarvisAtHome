@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.4.0)
+## What Jarvis can do right now (v0.5.0)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -30,6 +30,8 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Robust write proposal parsing (v0.4.0)** — the frontend proposal parser now recovers from malformed JSON where local Ollama models emit literal newlines inside JSON strings instead of `\n` escapes. The repair runs only when the `jarvis-write-proposal` marker is present and standard parsing fails. Backend validation and the Approve step are unchanged.
 - **Open draft from success state (v0.4.1)** — after approving a `drafts/` write proposal in chat, the success banner shows the created file path and an "Open draft in Workspace Files" button. Clicking it navigates the Workspace Files panel to `drafts/` and previews the newly created file. Non-draft writes keep the existing success message unchanged.
 - **Copy draft content (v0.4.2)** — the draft success banner also shows a "Copy draft content" button that writes the approved Markdown text directly to the clipboard. The button shows "✓ Copied" for 2 seconds on success, or an inline error if the clipboard API is unavailable. No email is sent; nothing is written.
+- **Voice input (v0.5.0)** — a mic button in the chat input bar uses the browser Web Speech API to transcribe one utterance at a time and append it to the input field. Nothing is sent automatically. Shows a pulsing "Listening…" indicator while active; reports microphone permission errors inline. Off when the browser does not support the API.
+- **Voice replies / TTS (v0.5.0)** — a "Voice replies: off/on" toggle below the input bar uses the browser SpeechSynthesis API to read each new assistant response aloud after streaming completes. Off by default. When a write proposal is present the spoken text is replaced with a neutral summary to avoid reading raw JSON. Toggling off immediately cancels any speech in progress. No cloud services used.
 
 ## Prerequisites
 
@@ -138,7 +140,7 @@ This file is local-only and gitignored. It is created automatically on first API
 - **No file tools yet.** Jarvis cannot read or write project files in v0.1.
 - **No email sending.** Email drafts are saved as local Markdown files in `workspace/drafts/` with explicit write approval required. No connection to any email provider.
 - **No Home Assistant.** Smart home integration is planned for v0.6.
-- **No voice.** Voice input/output is planned for v0.5.
+- **Voice is browser-only.** Mic input and TTS use the Web Speech API; no cloud speech provider is used.
 - **No secrets in commits.** Use `.env` files (gitignored). See `.env.example` files.
 
 ## Current limitations
@@ -147,7 +149,7 @@ This file is local-only and gitignored. It is created automatically on first API
 - File tools are read-only — no writes, edits, or deletes yet (v0.2.3+).
 - File browser shows workspace root only — no subdirectory navigation yet (v0.2.3+).
 - Only one file can be attached per message — attaching a second replaces the first.
-- No voice input or output.
+- Voice input/output uses the browser Web Speech API — not supported in Firefox.
 - No smart home integration.
 - No cross-device sync — the SQLite database is local to one machine.
 - Chat history cannot be exported.
@@ -161,7 +163,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.2 | File tools — read files, propose edits, show diffs, require approval |
 | v0.3 | Memory — local memory, project notes, user preferences |
 | v0.4 ✓ | Email drafts — local Markdown files in `workspace/drafts/`, write-with-approval, no sending |
-| v0.5 | Voice — microphone input, text-to-speech output |
+| v0.5 ✓ | Voice — microphone input, text-to-speech output |
 | v0.6 | Smart Home — Home Assistant integration |
 
 ## Keyboard shortcuts
