@@ -55,6 +55,80 @@ function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
 // non-empty `path` and `content` string fields. This prevents any prose from
 // being misidentified as a proposal.
 
+// ─── Multiline-JSON repair fallback ──────────────────────────────────────────
+//
+// Local Ollama models sometimes emit literal newline characters inside JSON
+// string values instead of the required \n escape sequence.  This makes
+// JSON.parse throw even though the proposal intent is completely clear from
+// context.  For example a model may output:
+//
+//   {"path":"drafts/foo.md","content":"# Hello
+//
+//   Body text here
+//   "}
+//
+// instead of the correct single-line form:
+//   {"path":"drafts/foo.md","content":"# Hello\n\nBody text here\n"}
+//
+// This function is called ONLY after JSON.parse fails AND the
+// jarvis-write-proposal marker was already confirmed present by
+// extractWriteProposal.  It uses strict pattern matching to extract the two
+// required fields independently rather than attempting a generic JSON fix:
+//
+//   path    — regex-matched; must contain no newlines, quotes, or traversal.
+//   content — sliced from after "content":" to just before the final "}.
+//             Literal newlines in the slice are preserved as actual file
+//             content (which is what the model intended them to be).
+//
+// Returns null if either field cannot be reliably extracted.
+// The backend re-validates all paths before any write — these checks are
+// defence-in-depth only.
+function repairMultilineProposalJson(
+  jsonBody: string
+): { path: string; content: string } | null {
+  // Extract path — simple relative path, no newlines, no backslashes, no quotes
+  const pathMatch = /"path"\s*:\s*"([^"\r\n\\]+)"/.exec(jsonBody);
+  if (!pathMatch) return null;
+  const proposalPath = pathMatch[1].trim();
+  if (!proposalPath) return null;
+
+  // Reject absolute paths (/ or Windows drive letter) and traversal sequences.
+  // Backend resolveWorkspacePath is the authoritative guard; we fail fast here.
+  if (/^[/\\]/.test(proposalPath) || /^[A-Za-z]:/.test(proposalPath)) return null;
+  if (
+    proposalPath.includes("../") ||
+    proposalPath.includes("..\\") ||
+    proposalPath.includes("/..") ||
+    proposalPath.includes("\\..")
+  )
+    return null;
+
+  // Find the start of the content value — the character immediately after "content":"
+  const contentKeyMatch = /"content"\s*:\s*"/.exec(jsonBody);
+  if (!contentKeyMatch) return null;
+  const contentValueStart = contentKeyMatch.index + contentKeyMatch[0].length;
+
+  // Find the end of the content value — the last " followed by optional whitespace
+  // and } at the very end of the body.  This is the closing quote of the JSON object.
+  const closingMatch = /"\s*\}\s*$/.exec(jsonBody);
+  if (!closingMatch) return null;
+  const contentValueEnd = closingMatch.index;
+
+  if (contentValueEnd <= contentValueStart) return null;
+
+  // Slice out the raw content.  It contains literal newlines (the model's mistake);
+  // those are the actual line breaks the model intended to write into the file, so
+  // we keep them as-is.  We do unescape any valid JSON escape sequences the model
+  // may have correctly emitted within the content itself (\n won't appear here since
+  // it used real newlines, but \" and \\ might).
+  const rawContent = jsonBody.slice(contentValueStart, contentValueEnd);
+  const content = rawContent
+    .replace(/\\"/g, '"')    // \" → " (escaped quote inside content)
+    .replace(/\\\\/g, "\\"); // \\ → \ (escaped backslash inside content)
+
+  return { path: proposalPath, content };
+}
+
 // Internal result of extractWriteProposal — not exported.
 interface ProposalExtract {
   blockStart: number; // index of the opening ``` (or the marker itself if no fence)
@@ -130,14 +204,24 @@ function extractWriteProposal(text: string): ProposalExtract | null {
         depth--;
         if (depth === 0) {
           const jsonEnd = i + 1;
-          const jsonBody = text.slice(jsonStart, jsonEnd);
+          // May be replaced with re-encoded JSON if the repair fallback fires.
+          let jsonBody = text.slice(jsonStart, jsonEnd);
 
-          // Validate: must be parseable JSON with a non-empty path string and a content string
+          // Validate: must be parseable JSON with a non-empty path string and a
+          // content string.  If JSON.parse fails, attempt the multiline repair
+          // fallback — local Ollama models sometimes emit literal newline
+          // characters inside JSON string values instead of \n escape sequences.
           let parsed: { path?: unknown; content?: unknown };
           try {
             parsed = JSON.parse(jsonBody) as { path?: unknown; content?: unknown };
           } catch {
-            return null; // malformed JSON — not a valid proposal
+            // JSON.parse failed — try the multiline-JSON repair fallback.
+            const repaired = repairMultilineProposalJson(jsonBody);
+            if (!repaired) return null; // Cannot repair — not a valid proposal.
+            // Re-encode as standard valid JSON so every downstream caller that
+            // calls JSON.parse(result.jsonBody) works without modification.
+            jsonBody = JSON.stringify({ path: repaired.path, content: repaired.content });
+            parsed = repaired;
           }
           if (typeof parsed.path !== "string" || !parsed.path.trim()) return null;
           if (typeof parsed.content !== "string") return null;
@@ -494,6 +578,7 @@ export default function ChatPanel({
   const [chatProposal, setChatProposal] = useState<{
     id: string;
     path: string;
+    operation: "edit" | "create";
     diff: DiffLine[];
   } | null>(null);
   const [chatProposalLoading, setChatProposalLoading] = useState(false);
@@ -637,6 +722,7 @@ export default function ChatPanel({
         ok: boolean;
         id?: string;
         path?: string;
+        operation?: "edit" | "create";
         diff?: DiffLine[];
         error?: string;
       };
@@ -652,6 +738,7 @@ export default function ChatPanel({
       setChatProposal({
         id: data.id,
         path: data.path ?? proposalPath,
+        operation: data.operation ?? "edit",
         diff: data.diff,
       });
       onActivity?.(
@@ -1024,9 +1111,17 @@ export default function ChatPanel({
         <div className="flex-shrink-0 border-t border-amber-500/20 bg-amber-900/10">
           {/* Banner header */}
           <div className="flex items-center justify-between px-6 py-2">
-            <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest">
-              {chatWriteSuccess ? "Write applied" : "Pending write approval"}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest">
+                {chatWriteSuccess ? "Write applied" : "Pending write approval"}
+              </p>
+              {/* Email draft badge — visible while a drafts/ proposal is pending */}
+              {chatProposal?.path.startsWith("drafts/") && (
+                <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium">
+                  email draft
+                </span>
+              )}
+            </div>
             {(chatWriteSuccess || chatProposalError) && (
               <button
                 onClick={() => {
@@ -1062,14 +1157,24 @@ export default function ChatPanel({
           {chatProposal && (
             <>
               <div className="px-6 pb-1">
-                <p className="text-xs text-amber-700">
-                  Target:{" "}
-                  <span className="text-amber-500 font-mono">
-                    workspace/{chatProposal.path}
-                  </span>
-                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs text-amber-700">
+                    Target:{" "}
+                    <span className="text-amber-500 font-mono">
+                      workspace/{chatProposal.path}
+                    </span>
+                  </p>
+                  {/* New-file badge — only for create proposals */}
+                  {chatProposal.operation === "create" && (
+                    <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium">
+                      new file
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-amber-800 mt-0.5">
-                  Nothing has been written yet.
+                  {chatProposal.operation === "create"
+                    ? "File will be created after approval. Nothing written yet."
+                    : "Nothing has been written yet."}
                 </p>
               </div>
 

@@ -43,10 +43,31 @@ export const JARVIS_SYSTEM_PROMPT =
   "- Do not use Markdown headings, bullet points, or prose around the block.\n" +
   "- The path must be relative to the workspace directory (e.g. 'welcome.md' or 'drafts/notes.md').\n" +
   "- The content must be the complete new file content as a JSON string (escape newlines as \\n, escape double-quotes as \\\").\n" +
+  "- CRITICAL: Never put literal newline characters inside the JSON string values. Use the \\n escape sequence instead.\n" +
+  "- CRITICAL: The entire JSON object must fit on a single line between the opening and closing fences. No line breaks inside the JSON.\n" +
   "- The JSON inside the block must be valid JSON with exactly two keys: path and content.\n" +
   "- The proposal is not written automatically. The user must click 'Approve write' in the UI.\n" +
   "- Only use this format when the user explicitly asks to create or change a workspace file.\n" +
-  "- For all other questions and tasks, respond normally.";
+  "- For all other questions and tasks, respond normally.\n\n" +
+  "## Local email drafts\n\n" +
+  "When the user asks you to write, draft, compose, or create an email, " +
+  "create a local Markdown draft file in the workspace using the write proposal format above. " +
+  "Output only the proposal block — do not explain the format.\n\n" +
+  "Default path: drafts/<subject-slug>.md (e.g. drafts/cleaning-day-board.md).\n" +
+  "Derive the filename from the email subject: lowercase, hyphens instead of spaces, .md extension.\n\n" +
+  "Format the draft content as a readable Markdown file:\n" +
+  "# Email Draft: <Subject>\n\n" +
+  "To: <recipient>\n" +
+  "Subject: <subject line>\n\n" +
+  "<email body>\n\n" +
+  "<sign-off, e.g. Best regards, Jimmy>\n\n" +
+  "Rules for local email drafts:\n" +
+  "- NEVER send emails. You have no ability to send emails and must not attempt to.\n" +
+  "- NEVER ask for email credentials, passwords, tokens, or API keys.\n" +
+  "- NEVER mention Gmail, Outlook, SMTP, SendGrid, or any email service.\n" +
+  "- NEVER claim the email was sent, will be sent, or is queued to send.\n" +
+  "- The draft is a local Markdown file. It is only written to disk after the user clicks Approve write.\n" +
+  "- If the user asks you to send an email, explain that you cannot send emails and offer to save a local draft instead.";
 
 export interface OllamaModel {
   name: string;

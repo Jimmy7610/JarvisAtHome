@@ -4,6 +4,7 @@
 
 import { randomUUID } from "crypto";
 import fs from "fs";
+import path from "path";
 import { resolveWorkspacePath } from "./fileTools";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -19,6 +20,8 @@ interface WriteProposal {
   path: string;
   /** Absolute validated path — stored for defense-in-depth re-check on approve */
   resolvedPath: string;
+  /** "edit" = file existed at proposal time; "create" = file did not exist */
+  operation: "edit" | "create";
   before: string;
   after: string;
   diff: DiffLine[];
@@ -99,16 +102,22 @@ function computeDiff(before: string, after: string): DiffLine[] {
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Validates the target path, reads the current file content, computes the diff,
- * and stores the proposal in the in-memory store.
+ * Validates the target path, reads the current file content (or uses "" for new files),
+ * computes the diff, and stores the proposal in the in-memory store.
+ *
+ * Supports two operations:
+ *   "edit"   — file exists; diff shows changes against current content.
+ *   "create" — file does not exist; diff shows all lines as added.
+ *              The parent directory must already exist.
  *
  * Throws if:
  *   - path escapes the workspace
- *   - file does not exist or is not a regular file
+ *   - target is an existing non-regular-file (e.g. a directory)
+ *   - parent directory does not exist (for create proposals)
  *   - proposed content exceeds MAX_WRITE_SIZE
  *   - too many concurrent proposals exist
  *
- * @returns Proposal id, path, before/after strings, and computed diff lines.
+ * @returns Proposal id, path, operation, before/after strings, and computed diff lines.
  */
 export function proposeWrite(
   relativePath: string,
@@ -116,6 +125,7 @@ export function proposeWrite(
 ): {
   id: string;
   path: string;
+  operation: "edit" | "create";
   before: string;
   after: string;
   diff: DiffLine[];
@@ -128,15 +138,30 @@ export function proposeWrite(
     );
   }
 
-  // Validate path — throws if outside workspace
+  // Validate path — throws if outside workspace or contains traversal
   const resolvedPath = resolveWorkspacePath(relativePath);
 
+  let before: string;
+  let operation: "edit" | "create";
+
   if (!fs.existsSync(resolvedPath)) {
-    throw new Error("File does not exist.");
-  }
-  const stat = fs.statSync(resolvedPath);
-  if (!stat.isFile()) {
-    throw new Error("Target path is not a regular file.");
+    // New file — parent directory must already exist inside the workspace
+    const parentDir = path.dirname(resolvedPath);
+    if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
+      throw new Error(
+        "Parent directory does not exist. Create the directory first."
+      );
+    }
+    before = "";
+    operation = "create";
+  } else {
+    // Existing path — must be a regular file, not a directory
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile()) {
+      throw new Error("Target path is not a regular file.");
+    }
+    before = fs.readFileSync(resolvedPath, "utf-8");
+    operation = "edit";
   }
 
   if (Buffer.byteLength(proposedContent, "utf8") > MAX_WRITE_SIZE) {
@@ -145,7 +170,6 @@ export function proposeWrite(
     );
   }
 
-  const before = fs.readFileSync(resolvedPath, "utf-8");
   const after = proposedContent;
   const diff = computeDiff(before, after);
   const id = randomUUID();
@@ -154,15 +178,18 @@ export function proposeWrite(
     id,
     path: relativePath,
     resolvedPath,
+    operation,
     before,
     after,
     diff,
     createdAt: Date.now(),
   });
 
-  console.log(`[Jarvis] Write proposal created: ${id} → ${relativePath}`);
+  console.log(
+    `[Jarvis] Write proposal created (${operation}): ${id} → ${relativePath}`
+  );
 
-  return { id, path: relativePath, before, after, diff };
+  return { id, path: relativePath, operation, before, after, diff };
 }
 
 /**
@@ -179,7 +206,7 @@ export function proposeWrite(
  */
 export function approveWrite(
   proposalId: string
-): { path: string; written: boolean } {
+): { path: string; operation: "edit" | "create"; written: boolean } {
   const proposal = writeProposals.get(proposalId);
   if (!proposal) {
     throw new Error(
@@ -194,12 +221,15 @@ export function approveWrite(
     throw new Error("Path validation mismatch. Proposal discarded for safety.");
   }
 
+  // fs.writeFileSync creates the file if it does not exist (create operation)
+  // and overwrites it if it does (edit operation). The parent directory must
+  // already exist — proposeWrite verified this at proposal creation time.
   fs.writeFileSync(resolvedPath, proposal.after, "utf-8");
   writeProposals.delete(proposalId);
 
   console.log(
-    `[Jarvis] Write approved and applied: ${proposalId} → ${proposal.path}`
+    `[Jarvis] Write approved and applied (${proposal.operation}): ${proposalId} → ${proposal.path}`
   );
 
-  return { path: proposal.path, written: true };
+  return { path: proposal.path, operation: proposal.operation, written: true };
 }

@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.3.4)
+## What Jarvis can do right now (v0.4.0)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -25,6 +25,9 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Chat-created write proposals (v0.3.2)** — when the assistant response contains a `jarvis-write-proposal` fenced block, ChatPanel automatically creates a pending write proposal and shows a diff with Approve/Cancel buttons. Nothing is written until the user clicks "Approve write". All workspace safety rules still apply.
 - **Improved write proposal display and UI polish (v0.3.3)** — the raw fenced block in assistant messages is now replaced with a styled amber callout card showing the target path and a note to review the diff below. Chat input auto-grows with content (min 72px, max 200px). Activity Log cards have better padding and text wrapping.
 - **Write approval diff readability and cancel event (v0.3.4)** — the diff panel now has a fixed header showing the target path, a scrollable diff body with 2 px left border accents (green for added, red for removed, transparent for context), and context lines are brighter (`slate-400`). Cancelling a write proposal now emits an amber Activity Log event (was plain info).
+- **Local email drafts (v0.4.0)** — ask Jarvis to write an email and it proposes a Markdown draft file under `workspace/drafts/`. The existing write-with-approval flow is reused: diff shown, Approve write required, nothing sent. No connection to any email service.
+- **New file creation with approval (v0.4.0)** — the write-with-approval flow now supports creating new files (not just editing existing ones). New files are shown with a "new file" badge and an all-green diff. The parent directory must already exist inside `workspace/`; no directories are created automatically. Applies to email drafts in `workspace/drafts/` and any other new workspace file proposals.
+- **Robust write proposal parsing (v0.4.0)** — the frontend proposal parser now recovers from malformed JSON where local Ollama models emit literal newlines inside JSON strings instead of `\n` escapes. The repair runs only when the `jarvis-write-proposal` marker is present and standard parsing fails. Backend validation and the Approve step are unchanged.
 
 ## Prerequisites
 
@@ -131,7 +134,7 @@ This file is local-only and gitignored. It is created automatically on first API
 
 - **Ollama only.** No OpenAI, Claude API, Gemini, Groq or other cloud AI provider is used inside the app.
 - **No file tools yet.** Jarvis cannot read or write project files in v0.1.
-- **No email sending.** Email drafts are planned for v0.4, with explicit approval required.
+- **No email sending.** Email drafts are saved as local Markdown files in `workspace/drafts/` with explicit write approval required. No connection to any email provider.
 - **No Home Assistant.** Smart home integration is planned for v0.6.
 - **No voice.** Voice input/output is planned for v0.5.
 - **No secrets in commits.** Use `.env` files (gitignored). See `.env.example` files.
@@ -155,7 +158,7 @@ This file is local-only and gitignored. It is created automatically on first API
 |---|---|
 | v0.2 | File tools — read files, propose edits, show diffs, require approval |
 | v0.3 | Memory — local memory, project notes, user preferences |
-| v0.4 | Email drafts — write only, never send automatically |
+| v0.4 ✓ | Email drafts — local Markdown files in `workspace/drafts/`, write-with-approval, no sending |
 | v0.5 | Voice — microphone input, text-to-speech output |
 | v0.6 | Smart Home — Home Assistant integration |
 
