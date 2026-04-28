@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.5.4)
+## What Jarvis can do right now (v0.5.6)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -36,6 +36,8 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Browser voice selector (v0.5.2)** — a second dropdown in the voice bar lists all voices installed on the OS and/or bundled with the browser (via `speechSynthesis.getVoices()`). The selected voice is applied to every TTS utterance. A "Test voice" button speaks a short preview phrase (language-aware) so the user can audition voices before committing. The selection persists via localStorage. No external TTS services used.
 - **TTS provider abstraction (v0.5.3)** — a "TTS:" dropdown in the voice bar lets you select between "Browser voice" (Web SpeechSynthesis, default) and "Local TTS (planned)" (future Piper/Kokoro integration). The speak logic is split into `speakWithBrowserTts` and `speakWithLocalTts` so the routing is clean. Local TTS is not yet active — selecting it shows a "not yet active" note and a friendly error on voice replies. Selection persists via localStorage.
 - **Local TTS HTTP provider foundation (v0.5.4)** — the Jarvis API now exposes `POST /tts/speak` which proxies to a local TTS server (Piper, Kokoro, or any compatible server). Disabled by default (`LOCAL_TTS_ENABLED=false`). Only `localhost` upstream URLs are accepted — remote URLs are rejected at startup. The frontend calls the Jarvis API (never the TTS server directly) and plays returned audio bytes through `HTMLAudioElement`. Stop voice and Voice replies toggle cancel local audio. No Piper/Kokoro binaries are installed by this change. Set `LOCAL_TTS_ENABLED=true` and `LOCAL_TTS_BASE_URL=http://localhost:5005` in `apps/api/.env` when a local TTS server is running.
+- **Local TTS setup guide and mock server (v0.5.5)** — `docs/setup/local-tts-server.md` documents the full architecture, safety rules, Piper/Kokoro overview, environment configuration, and step-by-step test instructions. A zero-dependency development mock server (`scripts/local-tts-mock-server.mjs`) returns a 440 Hz WAV beep so the complete audio transport path can be tested without installing any real TTS engine. Run it with `npm run dev:tts-mock`. Piper and Kokoro are still not bundled.
+- **Piper TTS HTTP wrapper foundation (v0.5.6)** — `scripts/local-tts-piper-server.mjs` is a zero-dependency Node.js HTTP wrapper around the Piper binary. Download the Piper binary and an ONNX voice model separately, set `PIPER_BIN` and `PIPER_VOICE_MODEL` environment variables, and run `npm run dev:tts-piper`. The server listens on `http://127.0.0.1:5005`, accepts `POST /speak`, spawns Piper with `--output_file` (reliable WAV output across all platforms), and returns `audio/wav`. No Piper binary is bundled — see `docs/setup/local-tts-server.md` section H for the full Windows setup guide.
 
 ## Prerequisites
 

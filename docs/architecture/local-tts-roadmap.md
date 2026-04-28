@@ -1,7 +1,7 @@
 # Local TTS Roadmap
 
 **Last updated:** 2026-04-28  
-**Status:** Architecture placeholder — not yet implemented
+**Status:** Piper HTTP wrapper foundation complete (v0.5.6) — Piper binary not bundled, must be downloaded separately
 
 ## Goal
 
@@ -57,13 +57,21 @@ JSON API wrapper).
 
 2. **Frontend** ✓ — `speakWithLocalTts(text)` in `ChatPanel.tsx` calls the route and plays the audio.
 
-3. **Remaining step — wire a real local TTS server:**
-   - Accepts `{ text: string; lang: string; voice?: string }`.
-   - Pipes text to a locally running Piper process (or Kokoro).
-   - Returns audio as `audio/wav` or `audio/mpeg`.
-   - Configurable via `LOCAL_TTS_URL` env var (e.g. `http://localhost:5500`).
+3. **Setup guide and mock server** ✓ (v0.5.5):
+   - `docs/setup/local-tts-server.md` — architecture, safety rules, Piper/Kokoro
+     overview, env config, POST /speak contract, step-by-step test instructions.
+   - `scripts/local-tts-mock-server.mjs` — zero-dependency Node.js mock server
+     that returns a 440 Hz WAV beep so the full transport path can be tested
+     without installing Piper or Kokoro.  Run with `npm run dev:tts-mock`.
 
-4. **Voice selector** — when the local provider is active, optionally replace the
+4. **Piper HTTP wrapper** ✓ (v0.5.6):
+   - `scripts/local-tts-piper-server.mjs` — zero-dependency Node.js wrapper.
+   - Spawns the Piper binary, passes text via stdin, reads `--output_file` WAV.
+   - Run with `npm run dev:tts-piper` after setting `PIPER_BIN` and `PIPER_VOICE_MODEL`.
+   - Piper binary and `.onnx` models are downloaded separately (never committed).
+   - Full setup instructions in `docs/setup/local-tts-server.md` section H.
+
+5. **Voice selector** — when the local provider is active, optionally replace the
    browser voice `<select>` with a list of available Piper/Kokoro voices fetched
    from `GET /tts/voices` (a future endpoint).
 

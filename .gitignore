@@ -68,3 +68,11 @@ graphify-out/
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Local TTS — Piper binaries, voice models, and generated audio
+# Never commit these — see docs/setup/local-tts-server.md
+local-tts/
+*.onnx
+*.onnx.json
+*.wav
+*.mp3
