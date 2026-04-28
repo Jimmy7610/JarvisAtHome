@@ -536,6 +536,7 @@ export default function ChatPanel({
   prefillInput,
   onConsumePrefill,
   onActivity,
+  onOpenWorkspaceFile,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -550,6 +551,9 @@ export default function ChatPanel({
   onConsumePrefill?: () => void;
   // Reports a named activity event to the parent for display in ActivityPanel.
   onActivity?: (text: string, type?: "info" | "write" | "error") => void;
+  // Called when the user clicks "Open draft" after a successful write.
+  // Parent (page.tsx) forwards the path to WorkspacePanel for navigation and preview.
+  onOpenWorkspaceFile?: (relativePath: string) => void;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -587,6 +591,9 @@ export default function ChatPanel({
   const [chatApproveError, setChatApproveError] = useState<string | null>(null);
   // true after a successful write — lets the user see confirmation before dismissing
   const [chatWriteSuccess, setChatWriteSuccess] = useState(false);
+  // The relative path of the most recently approved write — used to show the
+  // draft path and "Open draft" button in the success state.
+  const [chatApprovedPath, setChatApprovedPath] = useState<string | null>(null);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -787,8 +794,10 @@ export default function ChatPanel({
         `Chat write approved and applied to workspace/${chatProposal.path}`,
         "write"
       );
+      const approvedPath = chatProposal.path;
       setChatProposal(null);
       setChatWriteSuccess(true);
+      setChatApprovedPath(approvedPath);
     } catch {
       const errMsg = "API unreachable — is the Jarvis API running?";
       setChatApproveError(errMsg);
@@ -824,6 +833,7 @@ export default function ChatPanel({
     setChatProposalError(null);
     setChatApproveError(null);
     setChatWriteSuccess(false);
+    setChatApprovedPath(null);
 
     // Snapshot and immediately clear the attachment so it cannot be sent twice
     const attachmentSnapshot = attachment ?? null;
@@ -1129,6 +1139,7 @@ export default function ChatPanel({
                   setChatProposalError(null);
                   setChatApproveError(null);
                   setChatWriteSuccess(false);
+                  setChatApprovedPath(null);
                 }}
                 className="text-slate-600 hover:text-slate-400 text-sm leading-none"
                 aria-label="Dismiss"
@@ -1149,9 +1160,28 @@ export default function ChatPanel({
           )}
 
           {chatWriteSuccess && (
-            <p className="px-6 pb-3 text-xs text-green-400">
-              ✓ File written successfully. Open the Workspace panel to see the updated content.
-            </p>
+            <div className="px-6 pb-3 space-y-1.5">
+              {chatApprovedPath?.startsWith("drafts/") ? (
+                <>
+                  <p className="text-xs text-green-400">
+                    ✓ Draft created:{" "}
+                    <span className="font-mono text-green-500">
+                      workspace/{chatApprovedPath}
+                    </span>
+                  </p>
+                  <button
+                    onClick={() => onOpenWorkspaceFile?.(chatApprovedPath)}
+                    className="w-full text-xs py-1.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 transition-colors"
+                  >
+                    Open draft in Workspace Files
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-green-400">
+                  ✓ File written successfully. Open the Workspace panel to see the updated content.
+                </p>
+              )}
+            </div>
           )}
 
           {chatProposal && (

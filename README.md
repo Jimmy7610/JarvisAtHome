@@ -28,6 +28,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Local email drafts (v0.4.0)** — ask Jarvis to write an email and it proposes a Markdown draft file under `workspace/drafts/`. The existing write-with-approval flow is reused: diff shown, Approve write required, nothing sent. No connection to any email service.
 - **New file creation with approval (v0.4.0)** — the write-with-approval flow now supports creating new files (not just editing existing ones). New files are shown with a "new file" badge and an all-green diff. The parent directory must already exist inside `workspace/`; no directories are created automatically. Applies to email drafts in `workspace/drafts/` and any other new workspace file proposals.
 - **Robust write proposal parsing (v0.4.0)** — the frontend proposal parser now recovers from malformed JSON where local Ollama models emit literal newlines inside JSON strings instead of `\n` escapes. The repair runs only when the `jarvis-write-proposal` marker is present and standard parsing fails. Backend validation and the Approve step are unchanged.
+- **Open draft from success state (v0.4.1)** — after approving a `drafts/` write proposal in chat, the success banner shows the created file path and an "Open draft in Workspace Files" button. Clicking it navigates the Workspace Files panel to `drafts/` and previews the newly created file. Non-draft writes keep the existing success message unchanged.
 
 ## Prerequisites
 

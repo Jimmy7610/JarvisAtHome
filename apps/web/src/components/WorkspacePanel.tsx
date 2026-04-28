@@ -5,7 +5,7 @@
 // v0.2.3: subdirectory navigation with breadcrumb path indicator.
 // v0.2.5: manual refresh button reloads the current folder listing.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -118,6 +118,8 @@ export default function WorkspacePanel({
   onAttachFile,
   onAskAboutFile,
   onActivity,
+  openFileRequest,
+  onOpenFileRequestConsumed,
 }: {
   onAttachFile?: (path: string, content: string, size: number) => void;
   // Attaches the file AND prefills a suggested question in the chat input.
@@ -125,6 +127,12 @@ export default function WorkspacePanel({
   onAskAboutFile?: (path: string, content: string, size: number) => void;
   // Reports a named activity event to the parent for display in ActivityPanel.
   onActivity?: (text: string, type?: "info" | "write" | "error") => void;
+  // When set, WorkspacePanel navigates to the file's folder and opens a preview.
+  // Used by ChatPanel to auto-open a newly approved draft.
+  openFileRequest?: string | null;
+  // Called immediately after WorkspacePanel consumes openFileRequest so the parent
+  // can reset the value without an infinite effect loop.
+  onOpenFileRequestConsumed?: () => void;
 } = {}) {
   // Currently browsed directory (relative path from workspace root; "" = root)
   const [currentPath, setCurrentPath] = useState("");
@@ -142,6 +150,10 @@ export default function WorkspacePanel({
   // true when "Ask Jarvis about this file" was used (shows a different confirmation)
   const [asked, setAsked] = useState(false);
 
+  // Pending file to open after the next directory listing completes.
+  // Stored in a ref (not state) so setting it does not trigger a re-render.
+  const pendingOpenFileRef = useRef<string | null>(null);
+
   // ── Write proposal state ────────────────────────────────────────────────────
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [proposalLoading, setProposalLoading] = useState(false);
@@ -151,10 +163,52 @@ export default function WorkspacePanel({
   // true after a successful write — cleared on file switch or preview close
   const [writeSuccess, setWriteSuccess] = useState(false);
 
-  // Reload the listing whenever the current directory changes
+  // Reload the listing whenever the current directory changes.
+  // After loading, auto-selects a pending file if one was set via openFileRequest.
   useEffect(() => {
-    void fetchList(currentPath);
+    async function loadAndMaybeOpen(): Promise<void> {
+      const newEntries = await fetchList(currentPath);
+      const pending = pendingOpenFileRef.current;
+      if (!pending) return;
+      const found = newEntries.some(
+        (e) => e.type === "file" && e.path === pending
+      );
+      pendingOpenFileRef.current = null;
+      if (found) await handleSelectFile(pending);
+    }
+    void loadAndMaybeOpen();
   }, [currentPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the parent requests a file to be opened, navigate to its folder (if
+  // needed) and queue the file path for selection once the listing has loaded.
+  // Consumes the request immediately so the parent can reset to null.
+  useEffect(() => {
+    if (!openFileRequest) return;
+    onOpenFileRequestConsumed?.();
+
+    const slashIdx = openFileRequest.lastIndexOf("/");
+    const parentDir = slashIdx > 0 ? openFileRequest.slice(0, slashIdx) : "";
+    pendingOpenFileRef.current = openFileRequest;
+
+    if (currentPath !== parentDir) {
+      // Navigate — the listing useEffect will fire and handle pendingOpenFileRef.
+      navigateTo(parentDir);
+    } else {
+      // Already in the right folder — listing useEffect won't re-fire, so refresh
+      // and auto-select manually (the newly created file may not be in the cache).
+      async function refreshAndOpen(): Promise<void> {
+        const newEntries = await fetchList(parentDir);
+        const pending = pendingOpenFileRef.current;
+        if (!pending) return;
+        const found = newEntries.some(
+          (e) => e.type === "file" && e.path === pending
+        );
+        pendingOpenFileRef.current = null;
+        if (found) await handleSelectFile(pending);
+      }
+      void refreshAndOpen();
+    }
+  }, [openFileRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch a directory listing and update entries state.
   // Returns the fetched entries so callers can inspect them (e.g. refreshWorkspace).

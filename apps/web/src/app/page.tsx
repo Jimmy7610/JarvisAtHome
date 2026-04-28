@@ -75,6 +75,10 @@ export default function DashboardPage() {
   // ChatPanel consumes it once (via onConsumePrefill) so it never fires twice.
   const [prefillInput, setPrefillInput] = useState<string | null>(null);
 
+  // File path that WorkspacePanel should navigate to and preview.
+  // Set by ChatPanel after a draft write is approved; consumed by WorkspacePanel.
+  const [openFileRequest, setOpenFileRequest] = useState<string | null>(null);
+
   function handleAttachFile(path: string, content: string, size: number): void {
     setAttachment({ path, content, size });
   }
@@ -96,6 +100,12 @@ export default function DashboardPage() {
 
   function handleConsumePrefill(): void {
     setPrefillInput(null);
+  }
+
+  // Called by ChatPanel when the user clicks "Open draft" after a successful write.
+  // Passes the approved relative path to WorkspacePanel so it can navigate and preview.
+  function handleOpenWorkspaceFile(relativePath: string): void {
+    setOpenFileRequest(relativePath);
   }
 
   // Fetch the session list from the backend and update state
@@ -312,6 +322,7 @@ export default function DashboardPage() {
               prefillInput={prefillInput}
               onConsumePrefill={handleConsumePrefill}
               onActivity={handleActivity}
+              onOpenWorkspaceFile={handleOpenWorkspaceFile}
             />
           )}
         </section>
@@ -332,6 +343,8 @@ export default function DashboardPage() {
               onAttachFile={handleAttachFile}
               onAskAboutFile={handleAskAboutFile}
               onActivity={handleActivity}
+              openFileRequest={openFileRequest}
+              onOpenFileRequestConsumed={() => setOpenFileRequest(null)}
             />
           </div>
         </aside>
