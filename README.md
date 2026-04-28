@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.5.1)
+## What Jarvis can do right now (v0.5.2)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -33,6 +33,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Voice input (v0.5.0)** — a mic button in the chat input bar uses the browser Web Speech API to transcribe one utterance at a time and append it to the input field. Nothing is sent automatically. Shows a pulsing "Listening…" indicator while active; reports microphone permission errors inline. Off when the browser does not support the API.
 - **Voice replies / TTS (v0.5.0)** — a "Voice replies: off/on" toggle below the input bar uses the browser SpeechSynthesis API to read each new assistant response aloud after streaming completes. Off by default. When a write proposal is present the spoken text is replaced with a neutral summary to avoid reading raw JSON. Toggling off immediately cancels any speech in progress. No cloud services used.
 - **Speech language selector (v0.5.1)** — a compact voice bar below the input shows a language dropdown with Swedish (sv-SE) and English (en-US). The selected language is used for both mic recognition and TTS utterances. Selection persists across page reloads via localStorage. Default is Swedish (sv-SE). Voice controls (language, TTS toggle, speaking status) are grouped in this bar and only shown when the browser supports at least one voice API.
+- **Browser voice selector (v0.5.2)** — a second dropdown in the voice bar lists all voices installed on the OS and/or bundled with the browser (via `speechSynthesis.getVoices()`). The selected voice is applied to every TTS utterance. A "Test voice" button speaks a short preview phrase (language-aware) so the user can audition voices before committing. The selection persists via localStorage. No external TTS services used.
 
 ## Prerequisites
 

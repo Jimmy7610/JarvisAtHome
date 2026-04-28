@@ -41,8 +41,16 @@ interface JarvisRecognition {
 }
 type JarvisRecognitionCtor = new () => JarvisRecognition;
 
+// Minimal shape of a SpeechSynthesisVoice.
+// Only the fields used by Jarvis are listed here.
+interface JarvisVoice {
+  readonly name: string;
+  readonly lang: string;
+}
+
 interface JarvisUtterance {
   lang: string;
+  voice: JarvisVoice | null;
   onstart: (() => void) | null;
   onend: (() => void) | null;
   onerror: (() => void) | null;
@@ -51,9 +59,11 @@ type JarvisUtteranceCtor = new (text: string) => JarvisUtterance;
 
 interface JarvisSpeechSynthesis {
   readonly paused: boolean;
+  onvoiceschanged: (() => void) | null;
   cancel(): void;
   resume(): void;
   speak(utterance: JarvisUtterance): void;
+  getVoices(): JarvisVoice[];
 }
 
 // Runtime window type carrying all Speech API properties.
@@ -429,6 +439,8 @@ const STORAGE_KEY = "jarvis.chat.v1";
 const SESSION_STORAGE_KEY = "jarvis.session.v1";
 // localStorage key for the preferred voice/speech language
 const VOICE_LANG_KEY = "jarvis.voice.lang.v1";
+// localStorage key for the preferred SpeechSynthesis voice (by voice name)
+const VOICE_NAME_KEY = "jarvis.voice.name.v1";
 
 // Supported speech languages — used for both SpeechRecognition.lang and SpeechSynthesisUtterance.lang.
 // Keep in sync with the <select> options in the voice bar JSX below.
@@ -437,6 +449,12 @@ const VOICE_LANG_OPTIONS: { value: string; label: string }[] = [
   { value: "en-US", label: "English (en-US)" },
 ];
 const VOICE_LANG_DEFAULT = "sv-SE";
+
+// Preview phrases spoken by the "Test voice" button — one per supported language.
+const VOICE_PREVIEW_PHRASES: Record<string, string> = {
+  "en-US": "Hello Jimmy. Jarvis voice preview.",
+  "sv-SE": "Hej Jimmy. Detta är en röstförhandsvisning.",
+};
 
 const DEFAULT_GREETING: ChatMessage = {
   role: "assistant",
@@ -708,6 +726,13 @@ export default function ChatPanel({
   // Ref mirrors speechLang so the setTimeout inside speakAssistantText always uses
   // the current value even when the user changes language mid-response.
   const speechLangRef = useRef<string>(VOICE_LANG_DEFAULT);
+  // List of browser/system voices populated by getVoices() (may load asynchronously).
+  const [availableVoices, setAvailableVoices] = useState<JarvisVoice[]>([]);
+  // Name of the user-selected voice ("" = browser default).
+  // Persisted to localStorage under VOICE_NAME_KEY.
+  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+  // Ref mirrors selectedVoiceName for use inside speakAssistantText setTimeout.
+  const selectedVoiceNameRef = useRef<string>("");
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -802,6 +827,50 @@ export default function ChatPanel({
   useEffect(() => {
     speechLangRef.current = speechLang;
   }, [speechLang]);
+
+  // Keep selectedVoiceNameRef in sync with the selectedVoiceName state.
+  useEffect(() => {
+    selectedVoiceNameRef.current = selectedVoiceName;
+  }, [selectedVoiceName]);
+
+  // Load available browser/system voices and restore the saved voice preference.
+  //
+  // Browsers expose voices through speechSynthesis.getVoices().  Chrome/Edge load
+  // the voice list asynchronously, so we must also listen for onvoiceschanged.
+  // Firefox and some versions of Safari return voices synchronously.
+  //
+  // The saved voice name is validated against the loaded list — if it no longer
+  // exists (e.g. the user uninstalled a voice pack) we fall back to the default.
+  useEffect(() => {
+    const jw = window as unknown as JarvisWindow;
+    const ss = jw.speechSynthesis;
+    if (!ss) return;
+
+    let savedVoiceName = "";
+    try {
+      savedVoiceName = localStorage.getItem(VOICE_NAME_KEY) ?? "";
+    } catch {
+      // localStorage unavailable — keep empty (browser default)
+    }
+
+    function loadVoices(): void {
+      const voices = ss!.getVoices();
+      if (voices.length === 0) return; // not ready yet — wait for voiceschanged
+      setAvailableVoices(voices);
+      // Restore saved voice only if it is still present in the list
+      if (savedVoiceName && voices.some((v) => v.name === savedVoiceName)) {
+        setSelectedVoiceName(savedVoiceName);
+        selectedVoiceNameRef.current = savedVoiceName;
+      }
+    }
+
+    loadVoices(); // synchronous path (Firefox, some Safari versions)
+    ss.onvoiceschanged = loadVoices; // async path (Chrome, Edge)
+
+    return () => {
+      ss.onvoiceschanged = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stop speech playback immediately when the user turns off "Speak replies".
   useEffect(() => {
@@ -1134,6 +1203,13 @@ export default function ChatPanel({
 
       const utterance = new jwLate.SpeechSynthesisUtterance(text);
       utterance.lang = speechLangRef.current; // user-selected language, always current via ref
+      // Apply the user-selected voice if one is saved and still available.
+      // Always look up from getVoices() at speak time — the list can change between
+      // responses (e.g. OS voice packs installed/removed).
+      const currentVoices = jwLate.speechSynthesis.getVoices();
+      utterance.voice = selectedVoiceNameRef.current
+        ? currentVoices.find((v) => v.name === selectedVoiceNameRef.current) ?? null
+        : null;
       utterance.onstart = () => setSpeaking(true);
       utterance.onend = () => setSpeaking(false);
       utterance.onerror = () => {
@@ -1155,6 +1231,54 @@ export default function ChatPanel({
     (window as unknown as JarvisWindow).speechSynthesis?.cancel();
     setSpeaking(false);
     setSpeechError(null);
+  }
+
+  // Speak a short preview phrase using the currently selected language and voice.
+  // Lets the user audition voices without sending a chat message.
+  // Uses the same cancel/delay/resume pattern as speakAssistantText; does NOT
+  // check speakRepliesRef — this is an explicit user action, not an auto-reply.
+  function speakPreview(): void {
+    if (typeof window === "undefined") return;
+    const jw = window as unknown as JarvisWindow;
+    if (!jw.speechSynthesis || !jw.SpeechSynthesisUtterance) return;
+
+    // Pick the preview phrase for the currently selected language.
+    // speechLang is read directly (click handler — closure is always fresh).
+    const phrase =
+      VOICE_PREVIEW_PHRASES[speechLang] ??
+      VOICE_PREVIEW_PHRASES["en-US"] ??
+      "Jarvis voice preview.";
+
+    // Cancel any pending timer or ongoing speech before starting the preview.
+    if (speechTimerRef.current !== null) {
+      clearTimeout(speechTimerRef.current);
+      speechTimerRef.current = null;
+    }
+    setSpeechError(null);
+    jw.speechSynthesis.cancel();
+
+    speechTimerRef.current = setTimeout(() => {
+      speechTimerRef.current = null;
+      const jwLate = window as unknown as JarvisWindow;
+      if (!jwLate.speechSynthesis || !jwLate.SpeechSynthesisUtterance) return;
+      if (jwLate.speechSynthesis.paused) jwLate.speechSynthesis.resume();
+
+      const voices = jwLate.speechSynthesis.getVoices();
+      const voice = selectedVoiceNameRef.current
+        ? voices.find((v) => v.name === selectedVoiceNameRef.current) ?? null
+        : null;
+
+      const utterance = new jwLate.SpeechSynthesisUtterance(phrase);
+      utterance.lang = speechLangRef.current;
+      utterance.voice = voice;
+      utterance.onstart = () => setSpeaking(true);
+      utterance.onend = () => setSpeaking(false);
+      utterance.onerror = () => {
+        setSpeaking(false);
+        setSpeechError("Voice preview failed — check browser permissions.");
+      };
+      jwLate.speechSynthesis.speak(utterance);
+    }, 150);
   }
 
   const send = async (e: FormEvent) => {
@@ -1741,10 +1865,13 @@ export default function ChatPanel({
         </div>
 
         {/* Voice bar — only shown when the browser supports at least one voice API.
-            Contains: speech language selector | mic status | TTS toggle / speaking status. */}
+            Row 1: speech language + TTS toggle / speaking status
+            Row 2: voice selector + Test voice button (TTS only)
+            Row 3: status messages */}
         {(voiceSupported || ttsSupported) && (
-          <div className="mt-2 pt-2 border-t border-slate-800/60 space-y-1">
-            {/* Controls row */}
+          <div className="mt-2 pt-2 border-t border-slate-800/60 space-y-1.5">
+
+            {/* Row 1: language + TTS toggle */}
             <div className="flex items-center justify-between gap-3">
               {/* Left: speech language selector */}
               <div className="flex items-center gap-1.5">
@@ -1804,7 +1931,43 @@ export default function ChatPanel({
               )}
             </div>
 
-            {/* Status row — mic listening / voice errors / speech errors */}
+            {/* Row 2: voice selector + Test voice button (only when TTS is available) */}
+            {ttsSupported && (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-xs text-slate-700 flex-shrink-0">Voice:</span>
+                  <select
+                    value={selectedVoiceName}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      setSelectedVoiceName(name);
+                      selectedVoiceNameRef.current = name;
+                      try { localStorage.setItem(VOICE_NAME_KEY, name); } catch {}
+                    }}
+                    title="Browser/system voice for TTS replies"
+                    className="text-xs bg-slate-800/60 border border-slate-700/60 text-slate-400 rounded px-1.5 py-0.5 min-w-0 max-w-[150px] focus:outline-none focus:border-cyan-500/40 cursor-pointer"
+                  >
+                    <option value="">Browser default</option>
+                    {availableVoices.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* Test voice: speaks a short preview phrase to audition the selected voice */}
+                <button
+                  type="button"
+                  onClick={speakPreview}
+                  title="Speak a short phrase to preview the selected voice"
+                  className="flex-shrink-0 text-xs text-slate-700 hover:text-slate-400 border border-slate-700/40 rounded px-2 py-0.5 hover:border-slate-600/60 transition-colors"
+                >
+                  Test voice
+                </button>
+              </div>
+            )}
+
+            {/* Row 3: status messages — mic listening / voice errors / speech errors */}
             {voiceListening && (
               <p className="text-xs text-red-400 text-center animate-pulse">
                 Listening…
