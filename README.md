@@ -29,6 +29,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **New file creation with approval (v0.4.0)** — the write-with-approval flow now supports creating new files (not just editing existing ones). New files are shown with a "new file" badge and an all-green diff. The parent directory must already exist inside `workspace/`; no directories are created automatically. Applies to email drafts in `workspace/drafts/` and any other new workspace file proposals.
 - **Robust write proposal parsing (v0.4.0)** — the frontend proposal parser now recovers from malformed JSON where local Ollama models emit literal newlines inside JSON strings instead of `\n` escapes. The repair runs only when the `jarvis-write-proposal` marker is present and standard parsing fails. Backend validation and the Approve step are unchanged.
 - **Open draft from success state (v0.4.1)** — after approving a `drafts/` write proposal in chat, the success banner shows the created file path and an "Open draft in Workspace Files" button. Clicking it navigates the Workspace Files panel to `drafts/` and previews the newly created file. Non-draft writes keep the existing success message unchanged.
+- **Copy draft content (v0.4.2)** — the draft success banner also shows a "Copy draft content" button that writes the approved Markdown text directly to the clipboard. The button shows "✓ Copied" for 2 seconds on success, or an inline error if the clipboard API is unavailable. No email is sent; nothing is written.
 
 ## Prerequisites
 

@@ -584,6 +584,9 @@ export default function ChatPanel({
     path: string;
     operation: "edit" | "create";
     diff: DiffLine[];
+    // Full proposed content — stored so it can be copied to clipboard after approval
+    // without needing a second API read.
+    content: string;
   } | null>(null);
   const [chatProposalLoading, setChatProposalLoading] = useState(false);
   const [chatProposalError, setChatProposalError] = useState<string | null>(null);
@@ -594,6 +597,12 @@ export default function ChatPanel({
   // The relative path of the most recently approved write — used to show the
   // draft path and "Open draft" button in the success state.
   const [chatApprovedPath, setChatApprovedPath] = useState<string | null>(null);
+  // The full content of the most recently approved write — used by "Copy draft content".
+  const [chatApprovedContent, setChatApprovedContent] = useState<string | null>(null);
+  // true for 2 s after a successful clipboard copy — shows "Copied" label.
+  const [chatCopied, setChatCopied] = useState(false);
+  // Set when the clipboard write fails — shown inline so the user can react.
+  const [chatCopyError, setChatCopyError] = useState<string | null>(null);
 
   // Load chat history after mount — backend is preferred, localStorage is the fallback.
   // Must run after mount (not during render) to avoid server/client HTML mismatch.
@@ -747,6 +756,7 @@ export default function ChatPanel({
         path: data.path ?? proposalPath,
         operation: data.operation ?? "edit",
         diff: data.diff,
+        content: proposalContent,
       });
       onActivity?.(
         `Chat write proposal created for workspace/${proposalPath}`,
@@ -795,9 +805,13 @@ export default function ChatPanel({
         "write"
       );
       const approvedPath = chatProposal.path;
+      const approvedContent = chatProposal.content;
       setChatProposal(null);
       setChatWriteSuccess(true);
       setChatApprovedPath(approvedPath);
+      setChatApprovedContent(approvedContent);
+      setChatCopied(false);
+      setChatCopyError(null);
     } catch {
       const errMsg = "API unreachable — is the Jarvis API running?";
       setChatApproveError(errMsg);
@@ -823,6 +837,23 @@ export default function ChatPanel({
     }
   }
 
+  // Copy the approved draft content to the clipboard.
+  // Only callable when chatApprovedContent is set (draft success state).
+  // Failures are shown inline; the banner remains visible so the user can retry.
+  async function handleCopyDraft(): Promise<void> {
+    if (!chatApprovedContent) return;
+    try {
+      await navigator.clipboard.writeText(chatApprovedContent);
+      setChatCopied(true);
+      setChatCopyError(null);
+      onActivity?.("Draft content copied to clipboard", "info");
+      // Auto-reset the "Copied" label after 2 seconds
+      setTimeout(() => setChatCopied(false), 2000);
+    } catch {
+      setChatCopyError("Could not copy — try opening the draft and copying manually.");
+    }
+  }
+
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = input.trim();
@@ -834,6 +865,9 @@ export default function ChatPanel({
     setChatApproveError(null);
     setChatWriteSuccess(false);
     setChatApprovedPath(null);
+    setChatApprovedContent(null);
+    setChatCopied(false);
+    setChatCopyError(null);
 
     // Snapshot and immediately clear the attachment so it cannot be sent twice
     const attachmentSnapshot = attachment ?? null;
@@ -1140,6 +1174,9 @@ export default function ChatPanel({
                   setChatApproveError(null);
                   setChatWriteSuccess(false);
                   setChatApprovedPath(null);
+                  setChatApprovedContent(null);
+                  setChatCopied(false);
+                  setChatCopyError(null);
                 }}
                 className="text-slate-600 hover:text-slate-400 text-sm leading-none"
                 aria-label="Dismiss"
@@ -1175,6 +1212,23 @@ export default function ChatPanel({
                   >
                     Open draft in Workspace Files
                   </button>
+                  {/* Copy draft content — clipboard write; shows 2 s "Copied" on success */}
+                  {chatCopied ? (
+                    <p className="text-xs text-green-400 text-center">
+                      ✓ Copied to clipboard
+                    </p>
+                  ) : chatCopyError ? (
+                    <p className="text-xs text-red-500/70 text-center">
+                      {chatCopyError}
+                    </p>
+                  ) : (
+                    <button
+                      onClick={() => void handleCopyDraft()}
+                      className="w-full text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors"
+                    >
+                      Copy draft content
+                    </button>
+                  )}
                 </>
               ) : (
                 <p className="text-xs text-green-400">
