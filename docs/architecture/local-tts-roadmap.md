@@ -1,7 +1,7 @@
 # Local TTS Roadmap
 
 **Last updated:** 2026-04-28  
-**Status:** Piper HTTP wrapper foundation complete (v0.5.6) — Piper binary not bundled, must be downloaded separately
+**Status:** Windows setup helper added (v0.5.7) — Piper binary not bundled, optional PowerShell script automates download
 
 ## Goal
 
@@ -71,7 +71,17 @@ JSON API wrapper).
    - Piper binary and `.onnx` models are downloaded separately (never committed).
    - Full setup instructions in `docs/setup/local-tts-server.md` section H.
 
-5. **Voice selector** — when the local provider is active, optionally replace the
+5. **Windows setup helper** ✓ (v0.5.7):
+   - `scripts/setup-piper-windows.ps1` — optional PowerShell script.
+   - Creates `local-tts/piper/` and `local-tts/voices/` (gitignored).
+   - Downloads Piper zip and extracts it; downloads `.onnx` + `.onnx.json` model.
+   - Exits early with instructions if URL placeholders are not filled in first.
+   - Prints exact `$env:` commands and `.env` settings after successful setup.
+   - No binaries or models are bundled — script downloads them on demand.
+   - `docs/setup/local-tts-piper-env-example.ps1` — reference for env var setup.
+   - `docs/setup/local-tts-server.md` section I — full explanation.
+
+6. **Voice selector** — when the local provider is active, optionally replace the
    browser voice `<select>` with a list of available Piper/Kokoro voices fetched
    from `GET /tts/voices` (a future endpoint).
 

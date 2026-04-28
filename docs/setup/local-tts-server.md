@@ -347,3 +347,67 @@ select **TTS: Local TTS**, and click **Test voice**.
 | `PIPER_NOISE_SCALE` | Voice variation (float, e.g. `0.667`) |
 | `PIPER_LENGTH_SCALE` | Speech rate (float, `1.0` = normal) |
 | `PIPER_NOISE_W` | Phoneme width variation (float) |
+
+---
+
+## I. v0.5.7 Windows setup helper script (optional)
+
+Jarvis ships an optional PowerShell helper script that automates the manual
+steps from section H (directory creation, binary download, extraction, model
+download).
+
+**Script location:** `scripts/setup-piper-windows.ps1`
+
+### What it does
+
+1. Creates `local-tts/piper/` and `local-tts/voices/` inside the repo (both gitignored).
+2. Downloads the Piper Windows release zip (only if not already present).
+3. Extracts the zip into `local-tts/piper/`.
+4. Downloads the configured voice model `.onnx` and `.onnx.json` (only if not already present).
+5. Prints the exact `$env:` commands and `apps/api/.env` settings you need.
+
+### Important — fill in the URLs first
+
+The script contains three URL placeholder variables near the top:
+
+```powershell
+$PiperZipUrl    = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_RELEASE>"
+$VoiceModelUrl  = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_VOICE>"
+$VoiceConfigUrl = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_VOICE_CONFIG>"
+```
+
+**The script will not download anything until these are replaced with real URLs.**
+It exits with a clear error message and instructions if any placeholder is still present.
+
+Find official URLs at:
+- Piper binary: https://github.com/rhasspy/piper/releases → download `piper_windows_amd64.zip`
+- Voice models: https://huggingface.co/rhasspy/piper-voices → navigate to a voice folder
+
+### How to run
+
+From the repo root in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1
+```
+
+The script does nothing destructive — it skips files that already exist and never
+overwrites without prompting.
+
+### After the script completes
+
+The script prints all the commands you need.  In short:
+
+1. Set the env vars it prints and run `npm run dev:tts-piper`.
+2. Add the `.env` settings it prints to `apps/api/.env`.
+3. Restart `npm run dev:api`.
+4. Open http://localhost:3000, select **TTS: Local TTS**, click **Test voice**.
+
+For a reference of all the env vars, see `docs/setup/local-tts-piper-env-example.ps1`.
+
+### Safety reminders
+
+- `local-tts/` is gitignored — Piper binaries and models will never be committed.
+- `*.onnx`, `*.onnx.json`, `*.wav`, `*.mp3` are all gitignored.
+- `apps/api/.env` is gitignored — your local config is never committed.
+- Run `git status` after setup to confirm nothing unexpected is staged.
