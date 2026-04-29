@@ -83,6 +83,11 @@ interface MemoryPanelProps {
   // Allows page.tsx to immediately remove the deleted note from the chat context
   // selection and localStorage — no stale IDs after delete.
   onMemoryDeleted?: (id: string) => void;
+
+  // Called whenever the local memory list changes (after load, add, or delete).
+  // Used by page.tsx to keep the Memory nav badge count up to date.
+  // No Activity Log event is emitted for count changes — it is display-only.
+  onMemoryCountChange?: (count: number) => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -93,6 +98,7 @@ export default function MemoryPanel({
   onToggleMemoryContext,
   onClearMemoryContext,
   onMemoryDeleted,
+  onMemoryCountChange,
 }: MemoryPanelProps) {
   // ── Data state ──────────────────────────────────────────────────────────────
   const [memories, setMemories] = useState<MemoryItem[]>([]);
@@ -130,6 +136,16 @@ export default function MemoryPanel({
   useEffect(() => {
     loadMemories();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent of the current memory count after each load/add/delete.
+  // Fires only when loading is complete to avoid reporting the initial empty-array
+  // state before the fetch resolves (which would briefly show 0 and then jump to
+  // the real count, racing with the page.tsx mount fetch that already set it).
+  useEffect(() => {
+    if (!loading) {
+      onMemoryCountChange?.(memories.length);
+    }
+  }, [memories, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Add memory ──────────────────────────────────────────────────────────────
   async function handleAdd(e: React.FormEvent): Promise<void> {
@@ -454,7 +470,7 @@ export default function MemoryPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-700 text-center pb-2">
-          Memory is manual-only in v0.9.0 · stored in local SQLite ·
+          Memory is manual-only · stored in local SQLite ·
           not sent to Ollama or any cloud service
         </p>
       </div>

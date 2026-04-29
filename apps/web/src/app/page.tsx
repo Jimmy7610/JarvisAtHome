@@ -129,6 +129,10 @@ export default function DashboardPage() {
     MemoryContextItem[]
   >([]);
 
+  // Total number of memory notes in SQLite — used for the Memory nav badge.
+  // null = not yet known (before first API response); 0+ = confirmed count.
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+
   // Right sidebar tab — which panel is currently shown.
   // Default "workspace" so file tools are immediately accessible.
   const [rightTab, setRightTab] = useState<
@@ -158,20 +162,21 @@ export default function DashboardPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Restore selected memory context from localStorage on mount.
+  // On mount: fetch GET /memory once to (a) set the Memory nav badge count and
+  // (b) restore any persisted selected memory context from localStorage.
   //
-  // We only store UUIDs in localStorage — full content stays in SQLite.
-  // On restore we fetch GET /memory once to get current content, then
-  // rebuild selectedMemoryContext for IDs that still exist in the database.
-  // Stale IDs (from deleted memories) are silently removed from localStorage.
+  // This is a single fetch that serves both purposes — no double-request.
   //
-  // This effect fires only when there are saved IDs to restore; it is a
-  // silent restore and does NOT log to the Activity Log (not a user action).
-  // If the API is unreachable on mount, selection starts empty and localStorage
-  // IDs are preserved for the next page load.
+  // Count: always set from the response so the sidebar badge is populated
+  // immediately on page load even if the user never visits the Memory view.
+  //
+  // Selected context restore: only runs when there are saved IDs in localStorage.
+  // Stale IDs (deleted memories) are silently cleaned up.
+  // This is a silent restore — no Activity Log event is emitted.
+  // If the API is unreachable, count stays null and selection stays empty;
+  // saved IDs are preserved for the next page load.
   useEffect(() => {
     const savedIds = readStoredMemoryContextIds();
-    if (savedIds.length === 0) return; // nothing to restore — skip the fetch
 
     fetch(`${API_URL}/memory`)
       .then((r) => r.json())
@@ -186,6 +191,12 @@ export default function DashboardPage() {
           }[];
         }) => {
           if (!d.ok || !Array.isArray(d.memories)) return;
+
+          // Always set the count for the nav badge
+          setMemoryCount(d.memories.length);
+
+          // Restore selected context only if there are saved IDs
+          if (savedIds.length === 0) return;
 
           const savedIdSet = new Set(savedIds);
           // Rebuild MemoryContextItem list for IDs that still exist in SQLite
@@ -213,7 +224,7 @@ export default function DashboardPage() {
         }
       )
       .catch(() => {
-        // API unreachable on mount — selection stays empty.
+        // API unreachable on mount — count stays null, selection stays empty.
         // Saved IDs remain in localStorage for the next page load attempt.
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -284,6 +295,12 @@ export default function DashboardPage() {
     setSelectedMemoryContext([]);
     clearStoredMemoryContextIds();
     handleActivity("Memory context cleared", "info");
+  }
+
+  // Called by MemoryPanel after its internal memory list changes (load/add/delete).
+  // Updates the nav badge count without any Activity Log noise.
+  function handleMemoryCountChange(count: number): void {
+    setMemoryCount(count);
   }
 
   // Called by MemoryPanel after a memory note is successfully deleted.
@@ -581,11 +598,18 @@ export default function DashboardPage() {
             label="Chat"
             onClick={() => setView("chat")}
           />
-          {/* Memory — now functional */}
+          {/* Memory — badge shows total count and active-context count */}
           <NavItem
             label="Memory"
             active={view === "memory"}
             onClick={() => setView("memory")}
+            badge={
+              memoryCount === null
+                ? undefined // not yet loaded — no badge
+                : selectedMemoryContext.length > 0
+                ? `${memoryCount} · ${selectedMemoryContext.length}✓`
+                : `${memoryCount}`
+            }
           />
           <NavItem label="Files" disabled />
           {/* Settings */}
@@ -608,7 +632,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.9.2 — persistent memory context
+          v0.9.3 — memory nav badge
         </div>
       </aside>
 
@@ -646,6 +670,7 @@ export default function DashboardPage() {
               onToggleMemoryContext={handleMemoryContextToggle}
               onClearMemoryContext={handleMemoryContextClear}
               onMemoryDeleted={handleMemoryDeleted}
+              onMemoryCountChange={handleMemoryCountChange}
             />
           </section>
         ) : (
@@ -726,18 +751,22 @@ export default function DashboardPage() {
 
 // Simple navigation item — no router dependency needed at this stage.
 // onClick is optional so disabled items and items without a handler are safe.
+// badge is an optional short string shown right-aligned (e.g. memory count).
 function NavItem({
   label,
+  badge,
   active,
   disabled,
   onClick,
 }: {
   label: string;
+  badge?: string;
   active?: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }) {
-  const base = "w-full text-left px-3 py-2 rounded text-sm transition-colors";
+  const base =
+    "w-full text-left px-3 py-2 rounded text-sm transition-colors flex items-center justify-between gap-1";
   const styles = disabled
     ? `${base} text-slate-600 cursor-not-allowed`
     : active
@@ -746,7 +775,12 @@ function NavItem({
 
   return (
     <button className={styles} disabled={disabled} onClick={onClick}>
-      {label}
+      <span>{label}</span>
+      {badge !== undefined && (
+        <span className="text-xs font-normal text-slate-600 flex-shrink-0">
+          {badge}
+        </span>
+      )}
     </button>
   );
 }
