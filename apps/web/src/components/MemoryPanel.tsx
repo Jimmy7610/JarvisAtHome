@@ -131,7 +131,12 @@ export default function MemoryPanel({
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // ── Filter state ────────────────────────────────────────────────────────────
+  // ── Filter / search state ────────────────────────────────────────────────────
+  // activeTypeFilter — which type bucket is shown.
+  // "in-chat" shows only notes currently selected for this chat.
+  // Resets to "all" on page reload (not persisted).
+  type TypeFilter = "all" | "preference" | "project" | "note" | "in-chat";
+  const [activeTypeFilter, setActiveTypeFilter] = useState<TypeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
   // ── Load memories ───────────────────────────────────────────────────────────
@@ -306,16 +311,43 @@ export default function MemoryPanel({
   }
 
   // ── Filtered list ───────────────────────────────────────────────────────────
+  // Step 1: apply type/in-chat filter
+  const typeFilteredMemories =
+    activeTypeFilter === "all"
+      ? memories
+      : activeTypeFilter === "in-chat"
+      ? memories.filter((m) => selectedMemoryIds.has(m.id))
+      : memories.filter((m) => m.type === activeTypeFilter);
+
+  // Step 2: apply search query on top of the type-filtered list.
+  // Searches title, content, and type — case-insensitive, trimmed.
   const trimmedQuery = searchQuery.trim().toLowerCase();
-  const displayMemories =
-    trimmedQuery
-      ? memories.filter(
-          (m) =>
-            m.title.toLowerCase().includes(trimmedQuery) ||
-            m.content.toLowerCase().includes(trimmedQuery) ||
-            m.type.toLowerCase().includes(trimmedQuery)
-        )
-      : memories;
+  const displayMemories = trimmedQuery
+    ? typeFilteredMemories.filter(
+        (m) =>
+          m.title.toLowerCase().includes(trimmedQuery) ||
+          m.content.toLowerCase().includes(trimmedQuery) ||
+          m.type.toLowerCase().includes(trimmedQuery)
+      )
+    : typeFilteredMemories;
+
+  // Per-filter counts shown on filter buttons (always computed from the full list)
+  const filterCounts: Record<TypeFilter, number> = {
+    all: memories.length,
+    preference: memories.filter((m) => m.type === "preference").length,
+    project: memories.filter((m) => m.type === "project").length,
+    note: memories.filter((m) => m.type === "note").length,
+    "in-chat": memories.filter((m) => selectedMemoryIds.has(m.id)).length,
+  };
+
+  // Whether any filter/search is active (used to show "Clear filters" button)
+  const isFiltered = activeTypeFilter !== "all" || trimmedQuery !== "";
+
+  // Clear both type filter and search in one click
+  function handleClearFilters(): void {
+    setActiveTypeFilter("all");
+    setSearchQuery("");
+  }
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -430,29 +462,86 @@ export default function MemoryPanel({
           </div>
         )}
 
-        {/* Search / filter */}
+        {/* ── Type filter bar + search ─────────────────────────────────────── */}
         {!loading && !loadError && memories.length > 0 && (
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search memories…"
-              className="flex-1 rounded bg-slate-800/60 border border-slate-700 px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                Clear
-              </button>
-            )}
-            {searchQuery && (
-              <span className="text-xs text-slate-600 flex-shrink-0">
-                {displayMemories.length} match
-                {displayMemories.length !== 1 ? "es" : ""}
-              </span>
+          <div className="space-y-2">
+            {/* Filter pills */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {(
+                [
+                  { key: "all",        label: "All" },
+                  { key: "preference", label: "Preferences" },
+                  { key: "project",    label: "Projects" },
+                  { key: "note",       label: "Notes" },
+                  { key: "in-chat",    label: "In this chat" },
+                ] as { key: TypeFilter; label: string }[]
+              ).map(({ key, label }) => {
+                const isActive = activeTypeFilter === key;
+                const count = filterCounts[key];
+                // Per-filter active style
+                const activeStyle =
+                  key === "preference"
+                    ? "border-purple-500/50 text-purple-400 bg-purple-500/10"
+                    : key === "project"
+                    ? "border-cyan-500/50 text-cyan-400 bg-cyan-500/10"
+                    : key === "note"
+                    ? "border-blue-500/50 text-blue-400 bg-blue-500/10"
+                    : key === "in-chat"
+                    ? "border-purple-500/50 text-purple-400 bg-purple-500/10"
+                    : "border-slate-500 text-slate-200 bg-slate-700/50";
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setActiveTypeFilter(key)}
+                    className={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+                      isActive
+                        ? activeStyle
+                        : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-400"
+                    }`}
+                  >
+                    {label}
+                    {count > 0 && (
+                      <span
+                        className={`ml-1 font-mono ${
+                          isActive ? "opacity-80" : "opacity-50"
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Search input row */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search title, content, or type…"
+                className="flex-1 rounded bg-slate-800/60 border border-slate-700 px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors"
+              />
+              {isFiltered && (
+                <button
+                  onClick={handleClearFilters}
+                  className="flex-shrink-0 text-xs text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+
+            {/* Result summary */}
+            {(isFiltered || memories.length > 0) && (
+              <p className="text-xs text-slate-600">
+                {isFiltered
+                  ? displayMemories.length === 0
+                    ? "No matching memories"
+                    : `Showing ${displayMemories.length} of ${memories.length} ${memories.length === 1 ? "memory" : "memories"}`
+                  : `${memories.length} ${memories.length === 1 ? "memory" : "memories"}`}
+              </p>
             )}
           </div>
         )}
@@ -489,17 +578,27 @@ export default function MemoryPanel({
           </div>
         )}
 
-        {/* No search results */}
-        {!loading && !loadError && memories.length > 0 && searchQuery && displayMemories.length === 0 && (
-          <p className="text-sm text-slate-500 text-center py-4">
-            No memories match &ldquo;{searchQuery}&rdquo;.{" "}
+        {/* Context-aware empty state when filters/search produce no results */}
+        {!loading && !loadError && memories.length > 0 && displayMemories.length === 0 && (
+          <div className="rounded-lg border border-slate-700/40 bg-slate-800/20 p-6 text-center">
+            <p className="text-sm text-slate-500">
+              {activeTypeFilter === "in-chat"
+                ? trimmedQuery
+                  ? `No selected memories match "${searchQuery}".`
+                  : "No memories are selected for this chat."
+                : activeTypeFilter !== "all"
+                ? trimmedQuery
+                  ? `No ${activeTypeFilter} memories match "${searchQuery}".`
+                  : `No ${activeTypeFilter} memories yet.`
+                : `No memories match "${searchQuery}".`}
+            </p>
             <button
-              onClick={() => setSearchQuery("")}
-              className="text-cyan-500 hover:text-cyan-400 transition-colors"
+              onClick={handleClearFilters}
+              className="mt-2 text-xs text-cyan-500 hover:text-cyan-400 transition-colors"
             >
-              Clear search
+              Clear filters
             </button>
-          </p>
+          </div>
         )}
 
         {/* Memory list */}
