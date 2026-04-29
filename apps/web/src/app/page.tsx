@@ -14,6 +14,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 // localStorage keys (mirrored from ChatPanel — do not change independently)
 const SESSION_KEY = "jarvis.session.v1";
 const CHAT_CACHE_KEY = "jarvis.chat.v1";
+// localStorage key for the user's Ollama model override (set via Settings panel)
+const OLLAMA_MODEL_KEY = "jarvis:selected-ollama-model";
 
 // Initial activity events shown on page load (static — no SSR timestamp issues)
 const INITIAL_ACTIVITIES: ActivityEvent[] = [
@@ -57,6 +59,13 @@ export default function DashboardPage() {
   // Right sidebar is always visible regardless of which view is active.
   const [view, setView] = useState<"chat" | "settings">("chat");
 
+  // Ollama model override — null means use the backend-resolved default.
+  // Persisted in localStorage under OLLAMA_MODEL_KEY.
+  // Starts null; the mount effect below reads it from localStorage to avoid
+  // hydration mismatches (same pattern as activeSessionId).
+  const [selectedModelOverride, setSelectedModelOverride] =
+    useState<string | null>(null);
+
   // Right sidebar tab — which panel is currently shown.
   // Default "workspace" so file tools are immediately accessible.
   const [rightTab, setRightTab] = useState<
@@ -74,6 +83,34 @@ export default function DashboardPage() {
       type,
     };
     setActivities((prev) => [event, ...prev].slice(0, 50));
+  }
+
+  // Load model override from localStorage on mount (client-side only)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(OLLAMA_MODEL_KEY);
+      if (saved) setSelectedModelOverride(saved);
+    } catch {
+      // localStorage unavailable — ignore silently
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Called by SettingsPanel when the user picks a model from the dropdown.
+  function handleModelOverrideChange(model: string): void {
+    try {
+      localStorage.setItem(OLLAMA_MODEL_KEY, model);
+    } catch {}
+    setSelectedModelOverride(model);
+    handleActivity(`Ollama model override set to ${model}`, "info");
+  }
+
+  // Called by SettingsPanel when the user clicks "Reset to default".
+  function handleModelOverrideClear(): void {
+    try {
+      localStorage.removeItem(OLLAMA_MODEL_KEY);
+    } catch {}
+    setSelectedModelOverride(null);
+    handleActivity("Ollama model override cleared — using default config", "info");
   }
 
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
@@ -374,7 +411,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.8.0 — settings panel
+          v0.8.1 — model selector
         </div>
       </aside>
 
@@ -396,13 +433,18 @@ export default function DashboardPage() {
                 onConsumePrefill={handleConsumePrefill}
                 onActivity={handleActivity}
                 onOpenWorkspaceFile={handleOpenWorkspaceFile}
+                modelOverride={selectedModelOverride}
               />
             )}
           </section>
         ) : (
           /* Settings area — read-only config and status view */
           <section className="flex-1 flex flex-col border-r border-slate-800 overflow-hidden">
-            <SettingsPanel />
+            <SettingsPanel
+              modelOverride={selectedModelOverride}
+              onModelOverrideChange={handleModelOverrideChange}
+              onModelOverrideClear={handleModelOverrideClear}
+            />
           </section>
         )}
 

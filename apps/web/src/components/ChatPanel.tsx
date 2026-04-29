@@ -643,6 +643,7 @@ export default function ChatPanel({
   onConsumePrefill,
   onActivity,
   onOpenWorkspaceFile,
+  modelOverride,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -670,6 +671,10 @@ export default function ChatPanel({
   // Called when the user clicks "Open draft" after a successful write.
   // Parent (page.tsx) forwards the path to WorkspacePanel for navigation and preview.
   onOpenWorkspaceFile?: (relativePath: string) => void;
+  // Optional Ollama model override set by the user in Settings.
+  // When present, this model name is forwarded to the /chat/stream endpoint.
+  // If null/undefined the backend resolves the model using its configured default.
+  modelOverride?: string | null;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -1529,7 +1534,13 @@ export default function ChatPanel({
       const res = await fetch(`${API_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: apiMessage, history }),
+        body: JSON.stringify({
+          message: apiMessage,
+          history,
+          // Forward the user's model override if one is set; otherwise the backend
+          // resolves the default model from its own config.
+          ...(modelOverride ? { model: modelOverride } : {}),
+        }),
         signal: controller.signal,
       });
 

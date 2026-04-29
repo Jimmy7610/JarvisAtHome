@@ -117,7 +117,21 @@ function MonoValue({ children }: { children: React.ReactNode }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function SettingsPanel() {
+interface SettingsPanelProps {
+  // Ollama model override managed by page.tsx and stored in localStorage.
+  // null means "use backend default".
+  modelOverride?: string | null;
+  // Called when the user selects a model from the dropdown.
+  onModelOverrideChange?: (model: string) => void;
+  // Called when the user clicks Reset to default.
+  onModelOverrideClear?: () => void;
+}
+
+export default function SettingsPanel({
+  modelOverride,
+  onModelOverrideChange,
+  onModelOverrideClear,
+}: SettingsPanelProps = {}) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [settingsError, setSettingsError] = useState(false);
   const [ollamaData, setOllamaData] = useState<OllamaStatusData | null>(null);
@@ -180,9 +194,10 @@ export default function SettingsPanel() {
           <h2 className="text-lg font-semibold text-slate-100 tracking-tight">
             Settings
           </h2>
-          <p className="text-xs text-amber-400/80 mt-1">
-            Settings are read-only in v0.8.0. Editing will be added in a later
-            version.
+          <p className="text-xs text-slate-500 mt-1">
+            Most settings are read-only. The Ollama model selector below is a
+            local browser preference — it does not modify <span className="font-mono">.env</span> or
+            backend configuration.
           </p>
         </div>
 
@@ -228,11 +243,14 @@ export default function SettingsPanel() {
           <SettingRow label="Base URL">
             <MonoValue>{settings?.ollama.baseUrl ?? "—"}</MonoValue>
           </SettingRow>
-          <SettingRow label="Configured model">
+          <SettingRow label="Configured default">
             <MonoValue>{settings?.ollama.defaultModel ?? "—"}</MonoValue>
           </SettingRow>
           <SettingRow label="Active model">
-            {ollamaData?.ok && ollamaData.resolvedDefaultModel ? (
+            {/* Active model = override (if set) else resolved backend default */}
+            {modelOverride ? (
+              <MonoValue>{modelOverride}</MonoValue>
+            ) : ollamaData?.ok && ollamaData.resolvedDefaultModel ? (
               <MonoValue>{ollamaData.resolvedDefaultModel}</MonoValue>
             ) : (
               <span className="text-xs text-slate-500">
@@ -240,6 +258,58 @@ export default function SettingsPanel() {
               </span>
             )}
           </SettingRow>
+          <SettingRow label="Source">
+            {/* Shows whether the active model comes from a browser override or default config */}
+            {modelOverride ? (
+              <Badge variant="approval" label="browser override" />
+            ) : (
+              <Badge variant="disabled" label="default config" />
+            )}
+          </SettingRow>
+
+          {/* ── Model selector ─────────────────────────────────────────── */}
+          {ollamaConnected && ollamaData && ollamaData.models.length > 0 ? (
+            <div className="py-2">
+              <p className="text-xs text-slate-500 mb-1.5">Select active model</p>
+              <div className="flex gap-2">
+                <select
+                  value={
+                    modelOverride ??
+                    ollamaData.resolvedDefaultModel ??
+                    ollamaData.models[0]?.name ??
+                    ""
+                  }
+                  onChange={(e) => onModelOverrideChange?.(e.target.value)}
+                  className="flex-1 text-xs bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1.5 focus:outline-none focus:border-cyan-500/50 transition-colors"
+                >
+                  {ollamaData.models.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                {/* Reset button — only shown when an override is active */}
+                {modelOverride && (
+                  <button
+                    onClick={onModelOverrideClear}
+                    className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-400 hover:border-red-500/40 hover:text-red-400 transition-colors whitespace-nowrap"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                Stored in browser localStorage · does not modify .env
+              </p>
+            </div>
+          ) : !ollamaConnected ? (
+            <div className="py-1.5">
+              <p className="text-xs text-slate-600 italic">
+                Connect Ollama to enable model selector.
+              </p>
+            </div>
+          ) : null}
+
           <SettingRow label="Models available">
             <span className="text-sm text-slate-300">
               {ollamaData?.ok
@@ -358,6 +428,9 @@ export default function SettingsPanel() {
           <SettingRow label="Settings panel (read-only)">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Ollama model selector (browser)">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
           <SettingRow label="Memory (local notes, past context)">
@@ -366,14 +439,14 @@ export default function SettingsPanel() {
           <SettingRow label="Smart Home / Home Assistant">
             <Badge variant="planned" />
           </SettingRow>
-          <SettingRow label="Settings editing">
+          <SettingRow label="Settings editing (full)">
             <Badge variant="planned" />
           </SettingRow>
         </Card>
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.8.0"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "0.8.1"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

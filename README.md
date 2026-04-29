@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.8.0)
+## What Jarvis can do right now (v0.8.1)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -49,6 +49,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Workspace Files search (v0.7.4)** — a search input above the Workspace Files listing filters the current directory entries by name or path as you type. Case-insensitive substring match on both files and folders. A running match count appears beside the input; "No matching workspace files." with a Clear link is shown when nothing matches. Folder results are still navigable. Clicking a file result opens the preview normally — Attach, Ask Jarvis, and Propose safe edit all work unchanged. Current-directory filter only (matches the existing one-directory-at-a-time navigation model). Search clears automatically on every directory navigation.
 - **Right sidebar tabs (v0.7.5)** — the four right-sidebar panels (System Status, Activity Log, Workspace Files, Project Library) are now presented as a compact tab bar instead of a crowded vertical stack. Only one panel is visible at a time, giving each the full sidebar height (~830 px at 900 px screen height vs. the previous 120–280 px). Active tab is highlighted with a cyan underline. Default tab is Workspace. No panel components were changed — only the layout in `page.tsx`.
 - **Settings Panel foundation (v0.8.0, read-only)** — clicking Settings in the left sidebar now opens a dedicated Settings view instead of the chat area. The panel shows five read-only cards: Runtime (app/API version, environment), Ollama (provider, base URL, active model, connection status), Safety (file write approval, disabled email/terminal/cloud), Workspace (feature flags per capability), and Feature Status (completed and planned milestones). Data is fetched from a new `GET /settings` backend endpoint that returns only non-secret config. No editing, no `.env` writes, no secrets exposed. Clicking Dashboard or Chat returns to the normal chat view.
+- **Ollama model selector (v0.8.1)** — the Settings → Ollama card now includes a live dropdown of all installed Ollama models. Selecting a model saves it to browser `localStorage` under the key `jarvis:selected-ollama-model` and all subsequent chat messages use that model. The active model row shows which model is in use and a source badge indicates whether it comes from the default backend config or a browser override. A "Reset to default" button appears when an override is active and clears it from `localStorage`. Does not modify `.env` or any backend configuration. If Ollama is offline the dropdown is replaced with an informational note.
 
 ## Prerequisites
 
@@ -184,6 +185,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.6 | Smart Home — Home Assistant integration |
 | v0.7 ✓ | Project Library — read-only browser for workspace/projects/, attach file to chat |
 | v0.8 ✓ | Settings Panel — read-only config/status overview; Settings nav item functional |
+| v0.8.1 ✓ | Ollama model selector — browser localStorage preference, no .env writes |
 
 ## Keyboard shortcuts
 
