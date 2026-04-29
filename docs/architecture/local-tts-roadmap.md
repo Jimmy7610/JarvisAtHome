@@ -1,7 +1,7 @@
 # Local TTS Roadmap
 
-**Last updated:** 2026-04-28  
-**Status:** Piper setup checklist added (v0.5.8) — official URL selection documented, next step is to fill URLs and run the setup script
+**Last updated:** 2026-04-29  
+**Status:** Official Piper URLs selected and verified (v0.5.9) — run the setup script to download and install locally
 
 ## Goal
 
@@ -81,7 +81,7 @@ JSON API wrapper).
    - `docs/setup/local-tts-piper-env-example.ps1` — reference for env var setup.
    - `docs/setup/local-tts-server.md` section I — full explanation.
 
-6. **Piper setup checklist** ✓ (v0.5.8):
+6. **Piper setup checklist** ✓ (v0.5.8/v0.5.9):
    - `docs/setup/piper-windows-checklist.md` — complete step-by-step guide.
    - Covers official URL sources (GitHub releases, HuggingFace piper-voices).
    - Voice selection guidance — clear/calm English, no movie imitation.
@@ -89,7 +89,16 @@ JSON API wrapper).
    - Start wrapper, connect API, test commands, cleanup instructions.
    - Setup script updated to reference checklist in its placeholder error output.
 
-7. **Voice selector** — when the local provider is active, optionally replace the
+7. **Official URL selection** ✓ (v0.5.9):
+   - Piper release `2023.11.14-2` — latest release (repo archived Oct 2025, still valid).
+   - `piper_windows_amd64.zip` URL verified HTTP 200 via HEAD request.
+   - Voice selected: `en_GB-alan-medium` — British English male, medium quality.
+   - Both HuggingFace `.onnx` and `.onnx.json` URLs verified HTTP 200.
+   - URLs pre-filled in `scripts/setup-piper-windows.ps1` — no placeholders remain.
+   - `-DryRun` parameter added to script for safe preview before download.
+   - Next step: run `powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1`
+
+8. **Voice selector** — when the local provider is active, optionally replace the
    browser voice `<select>` with a list of available Piper/Kokoro voices fetched
    from `GET /tts/voices` (a future endpoint).
 

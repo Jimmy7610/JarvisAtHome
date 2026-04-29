@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Jarvis v0.5.8 - optional Piper TTS setup helper for Windows.
+    Jarvis v0.5.9 - optional Piper TTS setup helper for Windows.
 
 .DESCRIPTION
     Downloads the Piper TTS binary and one English voice model into the
@@ -12,30 +12,19 @@
 
         powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1
 
+    Use -DryRun to preview what will be downloaded without downloading:
+
+        powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1 -DryRun
+
     After the script completes, it prints the exact PowerShell commands
     you need to start the Piper wrapper server and the .env settings for
     the Jarvis API.
 
+.PARAMETER DryRun
+    Print URLs and target paths without downloading anything.
+    Useful to verify configuration before committing to a download.
+
 .NOTES
-    IMPORTANT - FILL IN THE URLS BEFORE RUNNING
-    ---------------------------------------------
-    The $PiperZipUrl, $VoiceModelUrl, and $VoiceConfigUrl variables below
-    contain placeholder values.  The script will refuse to download anything
-    until you replace them with the correct official URLs.
-
-    Where to find official URLs:
-      Piper binary  : https://github.com/rhasspy/piper/releases
-                      Download the "piper_windows_amd64.zip" asset from
-                      the latest release.
-      Voice model   : https://huggingface.co/rhasspy/piper-voices
-                      Navigate to the voice folder (e.g. en/en_GB/alan/medium/)
-                      and copy the download URL for the .onnx and .onnx.json files.
-
-    Example URL patterns (versions change - verify on the release pages):
-      Piper zip  : https://github.com/rhasspy/piper/releases/download/<tag>/piper_windows_amd64.zip
-      Voice .onnx: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx
-      Voice .json: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json
-
     DO NOT COMMIT:
       local-tts/           - Piper binary, DLLs, espeak-ng-data
       *.onnx / *.onnx.json - voice model files
@@ -43,20 +32,39 @@
       apps/api/.env        - environment config with secrets
 
     These are all covered by .gitignore.
+
+    See: docs\setup\piper-windows-checklist.md
 #>
+
+param(
+    [switch]$DryRun
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# --- URLs - FILL THESE IN BEFORE RUNNING ------------------------------------
-# Replace each placeholder with the actual official URL.
-# The script will stop immediately if any placeholder is still present.
+# --- URLs --------------------------------------------------------------------
+#
+# Piper binary
+#   Source  : https://github.com/rhasspy/piper/releases/tag/2023.11.14-2
+#   Release : 2023.11.14-2  (latest as of 2026-04-29, repo archived Oct 2025)
+#   Asset   : piper_windows_amd64.zip  (approx 21 MB)
+#   Verified: HEAD request returned HTTP 200 on 2026-04-29
+#
+$PiperZipUrl = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip"
 
-$PiperZipUrl    = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_RELEASE>"
-$VoiceModelUrl  = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_VOICE>"
-$VoiceConfigUrl = "<TO_BE_FILLED_FROM_OFFICIAL_PIPER_VOICE_CONFIG>"
+# Voice model: en_GB-alan-medium
+#   Source  : https://huggingface.co/rhasspy/piper-voices
+#   Voice   : en_GB-alan-medium  (British English male, medium quality)
+#   Reason  : British English, calm and clear, good for an assistant,
+#             not intended to imitate any fictional character.
+#             Medium quality balances file size (~60 MB) and output quality.
+#   Verified: HEAD request returned HTTP 200 on 2026-04-29
+#
+$VoiceModelUrl  = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx"
+$VoiceConfigUrl = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json"
 
-# File names for the downloaded artifacts.
+# File names derived from the voice selection above.
 $PiperZipName    = "piper_windows_amd64.zip"
 $VoiceModelName  = "en_GB-alan-medium.onnx"
 $VoiceConfigName = "en_GB-alan-medium.onnx.json"
@@ -69,19 +77,26 @@ $RepoRoot  = Split-Path -Parent $ScriptDir
 
 # --- Paths -------------------------------------------------------------------
 
-$LocalTtsDir   = Join-Path $RepoRoot "local-tts"
-$PiperDir      = Join-Path $LocalTtsDir "piper"
-$VoicesDir     = Join-Path $LocalTtsDir "voices"
-$PiperZipPath  = Join-Path $PiperDir $PiperZipName
-$VoiceOnnx     = Join-Path $VoicesDir $VoiceModelName
-$VoiceJson     = Join-Path $VoicesDir $VoiceConfigName
+$LocalTtsDir  = Join-Path $RepoRoot "local-tts"
+$PiperDir     = Join-Path $LocalTtsDir "piper"
+$VoicesDir    = Join-Path $LocalTtsDir "voices"
+$PiperZipPath = Join-Path $PiperDir $PiperZipName
+$VoiceOnnx    = Join-Path $VoicesDir $VoiceModelName
+$VoiceJson    = Join-Path $VoicesDir $VoiceConfigName
 
 # --- Banner ------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  Jarvis v0.5.8 - Piper TTS Windows Setup Helper" -ForegroundColor Cyan
-Write-Host "=================================================================" -ForegroundColor Cyan
+if ($DryRun) {
+    Write-Host "=================================================================" -ForegroundColor Magenta
+    Write-Host "  Jarvis v0.5.9 - Piper TTS Windows Setup Helper (DRY RUN)" -ForegroundColor Magenta
+    Write-Host "  No files will be downloaded or created." -ForegroundColor Magenta
+    Write-Host "=================================================================" -ForegroundColor Magenta
+} else {
+    Write-Host "=================================================================" -ForegroundColor Cyan
+    Write-Host "  Jarvis v0.5.9 - Piper TTS Windows Setup Helper" -ForegroundColor Cyan
+    Write-Host "=================================================================" -ForegroundColor Cyan
+}
 Write-Host "  Repo root : $RepoRoot"
 Write-Host "  Piper dir : $PiperDir"
 Write-Host "  Voices dir: $VoicesDir"
@@ -107,18 +122,46 @@ if (-not $urlsOk) {
     Write-Host "  Step 2: Open this script in a text editor:" -ForegroundColor White
     Write-Host "    scripts\setup-piper-windows.ps1" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Step 3: Fill in the three URL variables near line 55:" -ForegroundColor White
-    Write-Host ""
-    Write-Host "    `$PiperZipUrl    - piper_windows_amd64.zip download URL" -ForegroundColor Yellow
-    Write-Host "                      from https://github.com/rhasspy/piper/releases" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "    `$VoiceModelUrl  - voice .onnx download URL" -ForegroundColor Yellow
-    Write-Host "    `$VoiceConfigUrl - voice .onnx.json download URL" -ForegroundColor Yellow
-    Write-Host "                      from https://huggingface.co/rhasspy/piper-voices" -ForegroundColor Yellow
+    Write-Host "  Step 3: Fill in the three URL variables near the top." -ForegroundColor White
     Write-Host ""
     Write-Host "  Step 4: Run this script again." -ForegroundColor White
     Write-Host ""
     exit 1
+}
+
+# --- Dry-run mode ------------------------------------------------------------
+
+if ($DryRun) {
+    Write-Host "URLs are filled in and valid." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  Piper binary" -ForegroundColor Magenta
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  URL  : $PiperZipUrl"
+    Write-Host "  Size : approx 21 MB"
+    Write-Host "  Dest : $PiperZipPath"
+    Write-Host ""
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  Voice model" -ForegroundColor Magenta
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  Voice: en_GB-alan-medium (British English male, medium quality)"
+    Write-Host "  URL  : $VoiceModelUrl"
+    Write-Host "  Size : approx 60 MB"
+    Write-Host "  Dest : $VoiceOnnx"
+    Write-Host ""
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  Voice config" -ForegroundColor Magenta
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  URL  : $VoiceConfigUrl"
+    Write-Host "  Dest : $VoiceJson"
+    Write-Host ""
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host "  Dry run complete - nothing was downloaded." -ForegroundColor Magenta
+    Write-Host "  To run the real setup:" -ForegroundColor White
+    Write-Host "    powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1" -ForegroundColor Yellow
+    Write-Host "-----------------------------------------------------------------" -ForegroundColor Magenta
+    Write-Host ""
+    exit 0
 }
 
 # --- Create directories ------------------------------------------------------
@@ -138,7 +181,7 @@ if (Test-Path $PiperZipPath) {
     Write-Host "Piper zip already present - skipping download: $PiperZipPath"
 } else {
     Write-Host ""
-    Write-Host "Downloading Piper binary..." -ForegroundColor Cyan
+    Write-Host "Downloading Piper binary (approx 21 MB)..." -ForegroundColor Cyan
     Write-Host "  From: $PiperZipUrl"
     Write-Host "  To  : $PiperZipPath"
     Invoke-WebRequest -Uri $PiperZipUrl -OutFile $PiperZipPath -UseBasicParsing
@@ -175,7 +218,7 @@ if (Test-Path $VoiceOnnx) {
     Write-Host "Voice .onnx already present - skipping: $VoiceOnnx"
 } else {
     Write-Host ""
-    Write-Host "Downloading voice model (.onnx)..." -ForegroundColor Cyan
+    Write-Host "Downloading voice model: en_GB-alan-medium (approx 60 MB)..." -ForegroundColor Cyan
     Write-Host "  From: $VoiceModelUrl"
     Write-Host "  To  : $VoiceOnnx"
     Invoke-WebRequest -Uri $VoiceModelUrl -OutFile $VoiceOnnx -UseBasicParsing
@@ -188,7 +231,7 @@ if (Test-Path $VoiceJson) {
     Write-Host "Voice .onnx.json already present - skipping: $VoiceJson"
 } else {
     Write-Host ""
-    Write-Host "Downloading voice config (.onnx.json)..." -ForegroundColor Cyan
+    Write-Host "Downloading voice config..." -ForegroundColor Cyan
     Write-Host "  From: $VoiceConfigUrl"
     Write-Host "  To  : $VoiceJson"
     Invoke-WebRequest -Uri $VoiceConfigUrl -OutFile $VoiceJson -UseBasicParsing

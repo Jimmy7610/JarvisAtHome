@@ -428,3 +428,28 @@ Read this before filling in the URL variables in the setup script.  It explains:
 - How to fill in `scripts/setup-piper-windows.ps1` (section F)
 - How to start the wrapper and test it (sections H, J)
 - Cleanup and switching back to browser TTS (section K)
+
+---
+
+## K. v0.5.9 Official Piper URLs selected
+
+As of v0.5.9, `scripts/setup-piper-windows.ps1` has real official URLs pre-filled
+and verified (no placeholders remain):
+
+| File | URL |
+|---|---|
+| Piper binary | `https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip` |
+| Voice model | `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx` |
+| Voice config | `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json` |
+
+Voice selected: **`en_GB-alan-medium`** — British English male, medium quality.
+Verified HTTP 200 via HEAD request on 2026-04-29.
+
+The setup script also supports a `-DryRun` flag that prints all URLs and target
+paths without downloading anything:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1 -DryRun
+```
+
+Setup remains manual — run the script yourself when you are ready to download.

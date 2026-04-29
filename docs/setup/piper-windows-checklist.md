@@ -7,6 +7,11 @@ how to start the wrapper, and how to verify it works.
 **Piper is optional.**  Jarvis works fine with browser TTS out of the box.
 Follow this checklist only when you want on-device speech with consistent quality.
 
+> **v0.5.9 update:** Official URLs are now pre-filled in the setup script.
+> The `$PiperZipUrl`, `$VoiceModelUrl`, and `$VoiceConfigUrl` variables have been
+> set to confirmed live URLs (verified 2026-04-29).  You can skip directly to
+> section G to run the setup script, or use `-DryRun` to preview first.
+
 ---
 
 ## A. What this checklist is for
@@ -109,18 +114,37 @@ $VoiceModelName  = "en_GB-alan-medium.onnx"
 $VoiceConfigName = "en_GB-alan-medium.onnx.json"
 ```
 
-### How to find the correct URLs
+### v0.5.9 — Confirmed official URLs (pre-filled in the script)
+
+As of v0.5.9, the script has these URLs already set and verified:
+
+| Variable | URL | Size |
+|---|---|---|
+| `$PiperZipUrl` | `https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip` | ~21 MB |
+| `$VoiceModelUrl` | `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx` | ~60 MB |
+| `$VoiceConfigUrl` | `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json` | ~5 KB |
+
+These were verified with HTTP HEAD requests on 2026-04-29.
+
+**Voice selected: `en_GB-alan-medium`**
+- British English male voice, medium quality
+- Calm and clear — suitable for an assistant
+- No attempt to imitate any real person or fictional character
+- Medium quality is a good balance: ~60 MB model, good output quality
+
+**To update to a different voice:** change `$VoiceModelUrl`, `$VoiceConfigUrl`, and the two `$Voice*Name` variables in the script.
+
+### How to find the correct URLs (if you want to change them)
 
 **Piper binary URL:**
 
 1. Go to https://github.com/rhasspy/piper/releases
 2. Click the latest release
 3. Under "Assets", find `piper_windows_amd64.zip`
-4. Right-click the download link and copy the URL
-5. Paste it as `$PiperZipUrl`
+4. Copy the download link URL
+5. Paste it as `$PiperZipUrl` in the script
 
-The URL pattern looks like:
-
+The URL pattern:
 ```
 https://github.com/rhasspy/piper/releases/download/<version-tag>/piper_windows_amd64.zip
 ```
@@ -129,22 +153,23 @@ https://github.com/rhasspy/piper/releases/download/<version-tag>/piper_windows_a
 
 1. Go to https://huggingface.co/rhasspy/piper-voices/tree/main
 2. Navigate into the language folder (e.g. `en/en_GB/alan/medium/`)
-3. Click the `.onnx` file — then click the download icon to get the direct URL
+3. Click the `.onnx` file — then the download icon for the direct URL
 4. Do the same for the `.onnx.json` file
-5. Paste the two URLs as `$VoiceModelUrl` and `$VoiceConfigUrl`
-
-The URL pattern looks like:
-
-```
-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx
-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json
-```
+5. Paste as `$VoiceModelUrl` and `$VoiceConfigUrl`
 
 ---
 
 ## G. Running the setup script
 
-From the Jarvis repo root in PowerShell:
+**Preview first (no download, no files created):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1 -DryRun
+```
+
+This prints all URLs and target paths and exits cleanly.  Nothing is downloaded.
+
+**Run the real setup (~80 MB download total):**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1
@@ -155,12 +180,15 @@ The script will:
 1. Print a banner with the target directory paths.
 2. Exit immediately with instructions if any URL is still a placeholder.
 3. Create `local-tts/piper/` and `local-tts/voices/` (if not already present).
-4. Download `piper_windows_amd64.zip` into `local-tts/piper/`.
+4. Download `piper_windows_amd64.zip` (~21 MB) into `local-tts/piper/`.
 5. Extract the zip.
-6. Download the `.onnx` and `.onnx.json` voice files into `local-tts/voices/`.
-7. Print exact `$env:` commands and `.env` settings for next steps.
+6. Download `en_GB-alan-medium.onnx` (~60 MB) into `local-tts/voices/`.
+7. Download `en_GB-alan-medium.onnx.json` (~5 KB) into `local-tts/voices/`.
+8. Print exact `$env:` commands and `.env` settings for next steps.
 
 If any file is already present, it is skipped — safe to re-run.
+
+**Downloaded files go into `local-tts/` which is gitignored — never committed.**
 
 ---
 
