@@ -401,6 +401,17 @@ export default function DashboardPage() {
     setSelectedMemoryContext((prev) => prev.filter((m) => m.id !== id));
   }
 
+  // Called by MemoryPanel after a memory note is successfully updated (PATCH /memory/:id).
+  // If the updated note is currently selected in this chat's context, replace it so the
+  // chip and next outgoing message use the new title/content/type immediately.
+  // localStorage continues to store only IDs — no update needed there.
+  // No Activity Log event here (MemoryPanel already logs the update).
+  function handleMemoryUpdated(updated: MemoryContextItem): void {
+    setSelectedMemoryContext((prev) =>
+      prev.map((m) => (m.id === updated.id ? updated : m))
+    );
+  }
+
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
   const [attachment, setAttachment] = useState<{
     path: string;
@@ -726,7 +737,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.0.0 — stable release
+          v1.1.0 — edit memory notes
         </div>
       </aside>
 
@@ -764,6 +775,7 @@ export default function DashboardPage() {
               onToggleMemoryContext={handleMemoryContextToggle}
               onClearMemoryContext={handleMemoryContextClear}
               onMemoryDeleted={handleMemoryDeleted}
+              onMemoryUpdated={handleMemoryUpdated}
               onMemoryCountChange={handleMemoryCountChange}
             />
           </section>

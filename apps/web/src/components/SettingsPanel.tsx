@@ -414,7 +414,7 @@ export default function SettingsPanel({
           <SettingRow label="Selection storage">
             <span className="text-xs text-slate-400">localStorage IDs only</span>
           </SettingRow>
-          <SettingRow label="Manual add/delete">
+          <SettingRow label="Manual add/edit/delete">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
           <SettingRow label="Manual context (opt-in)">
@@ -550,6 +550,9 @@ export default function SettingsPanel({
           <SettingRow label="Per-message model stamp">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Edit memory notes">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
           <SettingRow label="Smart Home / Home Assistant">
@@ -574,7 +577,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "1.0.0"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "1.1.0"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

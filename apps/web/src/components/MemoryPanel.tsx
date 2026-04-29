@@ -84,6 +84,13 @@ interface MemoryPanelProps {
   // selection and localStorage — no stale IDs after delete.
   onMemoryDeleted?: (id: string) => void;
 
+  // Called after a memory note is successfully updated (PATCH /memory/:id).
+  // Allows page.tsx to immediately refresh the note in selectedMemoryContext if
+  // it is currently included in this chat — content/title update takes effect
+  // for the next outgoing message without any further user action.
+  // localStorage is unchanged — IDs are stable across edits.
+  onMemoryUpdated?: (item: MemoryContextItem) => void;
+
   // Called whenever the local memory list changes (after load, add, or delete).
   // Used by page.tsx to keep the Memory nav badge count up to date.
   // No Activity Log event is emitted for count changes — it is display-only.
@@ -98,6 +105,7 @@ export default function MemoryPanel({
   onToggleMemoryContext,
   onClearMemoryContext,
   onMemoryDeleted,
+  onMemoryUpdated,
   onMemoryCountChange,
 }: MemoryPanelProps) {
   // ── Data state ──────────────────────────────────────────────────────────────
@@ -112,6 +120,16 @@ export default function MemoryPanel({
   const [formContent, setFormContent] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  // ── Edit state ───────────────────────────────────────────────────────────────
+  // editingId: the id of the memory note currently open in inline edit mode.
+  // Only one note can be edited at a time — opening a new edit closes any other.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editType, setEditType] = useState<MemoryType>("note");
+  const [editTitle, setEditTitle] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // ── Filter state ────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
@@ -204,6 +222,86 @@ export default function MemoryPanel({
       onMemoryDeleted?.(item.id);
     } catch {
       alert("Could not reach the Jarvis API.");
+    }
+  }
+
+  // ── Edit memory ─────────────────────────────────────────────────────────────
+
+  // Open the inline edit form for a specific memory note.
+  // Closes any other open edit form first (only one at a time).
+  function handleEditOpen(item: MemoryItem): void {
+    setEditingId(item.id);
+    setEditType(item.type);
+    setEditTitle(item.title);
+    setEditContent(item.content);
+    setEditError(null);
+  }
+
+  // Close the edit form without saving.
+  function handleEditCancel(): void {
+    setEditingId(null);
+    setEditError(null);
+  }
+
+  // Submit the edit form — PATCH /memory/:id.
+  // Only the user can call this — there is no AI path to this function.
+  // Title is logged; content is never logged.
+  async function handleEditSave(id: string): Promise<void> {
+    const title = editTitle.trim();
+    const content = editContent.trim();
+    if (!title) {
+      setEditError("Title is required.");
+      return;
+    }
+    if (!content) {
+      setEditError("Content is required.");
+      return;
+    }
+
+    setSaving(true);
+    setEditError(null);
+
+    try {
+      const res = await fetch(`${API_URL}/memory/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: editType, title, content }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        memory?: MemoryItem;
+        error?: string;
+      };
+
+      if (!data.ok || !data.memory) {
+        setEditError(data.error ?? "Failed to save changes.");
+        return;
+      }
+
+      // Update the memory in the local list
+      setMemories((prev) =>
+        prev.map((m) => (m.id === id ? data.memory! : m))
+      );
+
+      // Notify page.tsx so it can update selectedMemoryContext if this note
+      // is currently included in this chat — no localStorage change needed
+      // because the ID is stable across edits.
+      onMemoryUpdated?.({
+        id: data.memory.id,
+        type: data.memory.type,
+        title: data.memory.title,
+        content: data.memory.content,
+      });
+
+      // Log the update — title only, never content
+      onActivity?.(`Memory updated: ${data.memory.title}`, "info");
+
+      // Close the edit form
+      setEditingId(null);
+    } catch {
+      setEditError("Could not reach the Jarvis API.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -407,64 +505,164 @@ export default function MemoryPanel({
         {/* Memory list */}
         {!loading && !loadError && displayMemories.length > 0 && (
           <div className="space-y-3">
-            {displayMemories.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-lg border border-slate-700/60 bg-slate-800/30 p-4"
-              >
-                {/* Top row: type badge + title + context toggle + delete */}
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <TypeBadge type={item.type} />
-                    <span className="text-sm font-medium text-slate-200 truncate">
-                      {item.title}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Include in this chat's context toggle */}
-                    <button
-                      onClick={() =>
-                        onToggleMemoryContext?.({
-                          id: item.id,
-                          type: item.type,
-                          title: item.title,
-                          content: item.content,
-                        })
-                      }
-                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                        selectedMemoryIds.has(item.id)
-                          ? "border-purple-500/50 text-purple-400 bg-purple-500/10"
-                          : "border-slate-700 text-slate-600 hover:border-purple-500/30 hover:text-purple-400"
-                      }`}
-                      title={
-                        selectedMemoryIds.has(item.id)
-                          ? "Remove from this chat"
-                          : "Include in this chat"
-                      }
-                    >
-                      {selectedMemoryIds.has(item.id) ? "✓ In this chat" : "In this chat"}
-                    </button>
-                    <button
-                      onClick={() => void handleDelete(item)}
-                      className="text-xs text-slate-600 hover:text-red-400 transition-colors"
-                      title="Delete memory"
-                    >
-                      Delete
-                    </button>
-                  </div>
+            {displayMemories.map((item) => {
+              const isEditing = editingId === item.id;
+              return (
+                <div
+                  key={item.id}
+                  className={`rounded-lg border bg-slate-800/30 p-4 transition-colors ${
+                    isEditing
+                      ? "border-cyan-500/30 bg-slate-800/50"
+                      : "border-slate-700/60"
+                  }`}
+                >
+                  {isEditing ? (
+                    /* ── Inline edit form ─────────────────────────────────── */
+                    <div className="space-y-3">
+                      {/* Edit header */}
+                      <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                        Edit memory
+                      </p>
+
+                      {/* Type selector */}
+                      <div className="flex gap-2">
+                        {(["note", "preference", "project"] as MemoryType[]).map(
+                          (t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              disabled={saving}
+                              onClick={() => setEditType(t)}
+                              className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-50 ${
+                                editType === t
+                                  ? TYPE_META[t].className
+                                  : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-400"
+                              }`}
+                            >
+                              {TYPE_META[t].label}
+                            </button>
+                          )
+                        )}
+                      </div>
+
+                      {/* Title input */}
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        placeholder="Title"
+                        maxLength={200}
+                        disabled={saving}
+                        className="w-full rounded bg-slate-800/60 border border-slate-700 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors disabled:opacity-50"
+                      />
+
+                      {/* Content textarea */}
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        placeholder="Content"
+                        maxLength={2000}
+                        rows={3}
+                        disabled={saving}
+                        className="w-full rounded bg-slate-800/60 border border-slate-700 px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors resize-none disabled:opacity-50"
+                      />
+
+                      {/* Error message */}
+                      {editError && (
+                        <p className="text-xs text-red-400">{editError}</p>
+                      )}
+
+                      {/* Save / Cancel */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void handleEditSave(item.id)}
+                          className="text-xs px-4 py-1.5 rounded border border-cyan-500/40 text-cyan-400 bg-cyan-500/5 hover:bg-cyan-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {saving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={handleEditCancel}
+                          className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Normal read view ─────────────────────────────────── */
+                    <>
+                      {/* Top row: type badge + title + action buttons */}
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <TypeBadge type={item.type} />
+                          <span className="text-sm font-medium text-slate-200 truncate">
+                            {item.title}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {/* Include in this chat's context toggle */}
+                          <button
+                            onClick={() =>
+                              onToggleMemoryContext?.({
+                                id: item.id,
+                                type: item.type,
+                                title: item.title,
+                                content: item.content,
+                              })
+                            }
+                            className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                              selectedMemoryIds.has(item.id)
+                                ? "border-purple-500/50 text-purple-400 bg-purple-500/10"
+                                : "border-slate-700 text-slate-600 hover:border-purple-500/30 hover:text-purple-400"
+                            }`}
+                            title={
+                              selectedMemoryIds.has(item.id)
+                                ? "Remove from this chat"
+                                : "Include in this chat"
+                            }
+                          >
+                            {selectedMemoryIds.has(item.id)
+                              ? "✓ In this chat"
+                              : "In this chat"}
+                          </button>
+                          {/* Edit button — opens inline edit form */}
+                          <button
+                            onClick={() => handleEditOpen(item)}
+                            className="text-xs text-slate-600 hover:text-cyan-400 transition-colors"
+                            title="Edit memory"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => void handleDelete(item)}
+                            className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+                            title="Delete memory"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Content */}
+                      <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
+                        {item.content}
+                      </p>
+
+                      {/* Timestamps — show updated_at when it differs from created_at */}
+                      <p className="text-xs text-slate-700 mt-2">
+                        {item.updated_at !== item.created_at
+                          ? `Updated ${formatDate(item.updated_at)}`
+                          : formatDate(item.created_at)}
+                      </p>
+                    </>
+                  )}
                 </div>
-
-                {/* Content */}
-                <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
-                  {item.content}
-                </p>
-
-                {/* Timestamp */}
-                <p className="text-xs text-slate-700 mt-2">
-                  {formatDate(item.created_at)}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

@@ -1,14 +1,15 @@
 // Memory routes — manual user-created notes/preferences stored in local SQLite.
 //
 // SAFETY CONTRACT:
-//   - All memory is created only through explicit user action (POST /memory).
-//   - The model/AI cannot write memory autonomously.
-//   - Memory is NOT injected into the Ollama system prompt in v0.9.0.
+//   - All memory is created or edited only through explicit user action.
+//   - The model/AI cannot write or edit memory autonomously.
+//   - Memory is injected into chat only when the user explicitly opts-in per note.
 //   - No secrets are accepted or stored (client responsibility, server does not log content).
 //
 // Endpoints:
 //   GET    /memory          — list all memories, ordered newest first
 //   POST   /memory          — create a new memory note
+//   PATCH  /memory/:id      — update an existing memory note (title, content, type)
 //   DELETE /memory/:id      — delete a memory note by id
 
 import { Router, Request, Response } from "express";
@@ -95,6 +96,77 @@ router.post("/", (req: Request, res: Response) => {
     .get(id, type, safeTitle, safeContent) as MemoryRow;
 
   res.json({ ok: true, memory });
+});
+
+// PATCH /memory/:id
+// Updates an existing memory note. Only user-initiated — never called by the AI.
+// Body: { type: "preference" | "project" | "note", title: string, content: string }
+// Returns: { ok: true, memory: MemoryRow }
+// Returns 404 if the memory does not exist.
+router.patch("/:id", (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  // Basic id guard
+  if (typeof id !== "string" || id.trim() === "") {
+    res.json({ ok: false, error: "Invalid memory id." });
+    return;
+  }
+
+  // Check the record exists before attempting an update
+  const existing = db
+    .prepare("SELECT id FROM memories WHERE id = ?")
+    .get(id) as { id: string } | undefined;
+
+  if (!existing) {
+    res.status(404).json({ ok: false, error: "Memory not found." });
+    return;
+  }
+
+  const { type, title, content } = req.body as {
+    type?: unknown;
+    title?: unknown;
+    content?: unknown;
+  };
+
+  // Validate type
+  if (typeof type !== "string" || !ALLOWED_TYPES.includes(type as MemoryType)) {
+    res.json({
+      ok: false,
+      error: `type must be one of: ${ALLOWED_TYPES.join(", ")}.`,
+    });
+    return;
+  }
+
+  // Validate title
+  if (typeof title !== "string" || title.trim() === "") {
+    res.json({ ok: false, error: "title must be a non-empty string." });
+    return;
+  }
+  const safeTitle = title.trim().slice(0, MAX_TITLE_LENGTH);
+
+  // Validate content
+  if (typeof content !== "string" || content.trim() === "") {
+    res.json({ ok: false, error: "content must be a non-empty string." });
+    return;
+  }
+  const safeContent = content.trim().slice(0, MAX_CONTENT_LENGTH);
+
+  // Update the record and return the updated row.
+  // updated_at is set explicitly to the current UTC timestamp.
+  // Content is NOT logged here — only the id and title would be safe to log.
+  const updated = db
+    .prepare(
+      `UPDATE memories
+       SET type       = ?,
+           title      = ?,
+           content    = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+       RETURNING id, type, title, content, created_at, updated_at`
+    )
+    .get(type, safeTitle, safeContent, id) as MemoryRow;
+
+  res.json({ ok: true, memory: updated });
 });
 
 // DELETE /memory/:id
