@@ -106,6 +106,24 @@ export default function DashboardPage() {
     setAttachedProjectFile(null);
   }
 
+  // Attaches the project file AND queues a suggested question in the chat input.
+  // Mirrors the existing handleAskAboutFile for WorkspacePanel — reuses the same
+  // prefillInput mechanism that ChatPanel already understands.
+  // Nothing is sent automatically — the user edits and presses Send.
+  function handleAskAboutProjectFile(
+    projectName: string,
+    filePath: string,
+    content: string,
+    size: number
+  ): void {
+    setAttachedProjectFile({ projectName, path: filePath, content, size });
+    setPrefillInput("Explain this project file and suggest safe improvements.");
+    handleActivity(
+      `Project file queued for question: ${projectName}/${filePath}`,
+      "info"
+    );
+  }
+
   function handleAttachFile(path: string, content: string, size: number): void {
     setAttachment({ path, content, size });
   }
@@ -381,6 +399,7 @@ export default function DashboardPage() {
             <ProjectLibraryPanel
               onActivity={handleActivity}
               onAttachFile={handleAttachProjectFile}
+              onAskAboutFile={handleAskAboutProjectFile}
             />
           </div>
         </aside>

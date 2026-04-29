@@ -70,6 +70,17 @@ type Props = {
     content: string,
     size: number
   ) => void;
+  /**
+   * Called when the user clicks "Ask Jarvis about this file".
+   * Attaches the file AND prefills the chat input with a suggested question.
+   * Nothing is sent automatically — the user edits and presses Send.
+   */
+  onAskAboutFile?: (
+    projectName: string,
+    filePath: string,
+    content: string,
+    size: number
+  ) => void;
 };
 
 type PanelView =
@@ -77,7 +88,7 @@ type PanelView =
   | { kind: "files"; projectName: string }
   | { kind: "file"; projectName: string; filePath: string };
 
-export default function ProjectLibraryPanel({ onActivity, onAttachFile }: Props) {
+export default function ProjectLibraryPanel({ onActivity, onAttachFile, onAskAboutFile }: Props) {
   // Which view is currently shown
   const [view, setView] = useState<PanelView>({ kind: "projects" });
 
@@ -406,16 +417,11 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile }: Props)
     if (loading) return renderLoading();
     if (error) return renderError();
 
-    // The "Attach to chat" button is only shown when a file is fully loaded and
-    // the parent has provided an onAttachFile callback.
-    const canAttach =
-      onAttachFile !== undefined &&
-      view.kind === "file" &&
-      fileContent !== null &&
-      !loading;
+    // Buttons are only active when a file is fully loaded and not currently loading.
+    const fileReady = view.kind === "file" && fileContent !== null && !loading;
 
     function handleAttach() {
-      if (!canAttach || view.kind !== "file") return;
+      if (!fileReady || view.kind !== "file") return;
       onAttachFile!(view.projectName, view.filePath, fileContent!, fileSize ?? 0);
       onActivity?.(
         `Attached project file ${view.projectName}/${view.filePath} to chat`,
@@ -423,24 +429,48 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile }: Props)
       );
     }
 
+    function handleAsk() {
+      if (!fileReady || view.kind !== "file") return;
+      onAskAboutFile!(view.projectName, view.filePath, fileContent!, fileSize ?? 0);
+      onActivity?.(
+        `Project file queued for question: ${view.projectName}/${view.filePath}`,
+        "info"
+      );
+    }
+
     return (
       <div className="flex flex-col flex-1 min-h-0">
-        {/* File metadata + attach action */}
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800 flex-shrink-0">
-          <span className="text-xs text-slate-500">
+        {/* File metadata + action buttons */}
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800 flex-shrink-0 flex-wrap">
+          <span className="text-xs text-slate-500 shrink-0">
             {fileSize !== null ? formatBytes(fileSize) : ""}
           </span>
-          {onAttachFile && (
-            <button
-              type="button"
-              onClick={handleAttach}
-              disabled={!canAttach}
-              title="Attach this file to the chat input"
-              className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
-            >
-              Attach to chat
-            </button>
-          )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Ask Jarvis about this file — attaches file AND prefills chat input */}
+            {onAskAboutFile && (
+              <button
+                type="button"
+                onClick={handleAsk}
+                disabled={!fileReady}
+                title="Attach this file and prefill a question in chat"
+                className="text-xs px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+              >
+                Ask Jarvis
+              </button>
+            )}
+            {/* Attach to chat — attaches file only, no prefill */}
+            {onAttachFile && (
+              <button
+                type="button"
+                onClick={handleAttach}
+                disabled={!fileReady}
+                title="Attach this file to the chat input"
+                className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+              >
+                Attach
+              </button>
+            )}
+          </div>
         </div>
         {/* File content */}
         <div className="flex-1 overflow-y-auto">
