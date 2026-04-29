@@ -28,6 +28,43 @@ const SESSION_KEY = "jarvis.session.v1";
 const CHAT_CACHE_KEY = "jarvis.chat.v1";
 // localStorage key for the user's Ollama model override (set via Settings panel)
 const OLLAMA_MODEL_KEY = "jarvis:selected-ollama-model";
+// localStorage key for persisted selected memory context IDs.
+// Only UUIDs are stored — full memory content stays in SQLite only.
+const MEMORY_CONTEXT_IDS_KEY = "jarvis:selected-memory-context-ids";
+
+// ── localStorage helpers for selected memory context IDs ─────────────────────
+//
+// Only IDs are persisted — never content.
+// On restore, page.tsx fetches GET /memory and cross-references by ID.
+
+function readStoredMemoryContextIds(): string[] {
+  try {
+    const raw = localStorage.getItem(MEMORY_CONTEXT_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    // Accept only string entries to guard against corrupted data
+    return (parsed as unknown[]).filter(
+      (v): v is string => typeof v === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredMemoryContextIds(ids: string[]): void {
+  try {
+    localStorage.setItem(MEMORY_CONTEXT_IDS_KEY, JSON.stringify(ids));
+  } catch {
+    // Storage quota exceeded or unavailable — not fatal
+  }
+}
+
+function clearStoredMemoryContextIds(): void {
+  try {
+    localStorage.removeItem(MEMORY_CONTEXT_IDS_KEY);
+  } catch {}
+}
 
 // Initial activity events shown on page load (static — no SSR timestamp issues)
 const INITIAL_ACTIVITIES: ActivityEvent[] = [
@@ -121,6 +158,66 @@ export default function DashboardPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Restore selected memory context from localStorage on mount.
+  //
+  // We only store UUIDs in localStorage — full content stays in SQLite.
+  // On restore we fetch GET /memory once to get current content, then
+  // rebuild selectedMemoryContext for IDs that still exist in the database.
+  // Stale IDs (from deleted memories) are silently removed from localStorage.
+  //
+  // This effect fires only when there are saved IDs to restore; it is a
+  // silent restore and does NOT log to the Activity Log (not a user action).
+  // If the API is unreachable on mount, selection starts empty and localStorage
+  // IDs are preserved for the next page load.
+  useEffect(() => {
+    const savedIds = readStoredMemoryContextIds();
+    if (savedIds.length === 0) return; // nothing to restore — skip the fetch
+
+    fetch(`${API_URL}/memory`)
+      .then((r) => r.json())
+      .then(
+        (d: {
+          ok: boolean;
+          memories?: {
+            id: string;
+            type: string;
+            title: string;
+            content: string;
+          }[];
+        }) => {
+          if (!d.ok || !Array.isArray(d.memories)) return;
+
+          const savedIdSet = new Set(savedIds);
+          // Rebuild MemoryContextItem list for IDs that still exist in SQLite
+          const restored: MemoryContextItem[] = d.memories
+            .filter((m) => savedIdSet.has(m.id))
+            .map((m) => ({
+              id: m.id,
+              type: m.type as MemoryContextItem["type"],
+              title: m.title,
+              content: m.content,
+            }));
+
+          if (restored.length > 0) {
+            setSelectedMemoryContext(restored);
+          }
+
+          // Clean up stale IDs (deleted memories no longer in the database)
+          if (restored.length !== savedIds.length) {
+            if (restored.length === 0) {
+              clearStoredMemoryContextIds();
+            } else {
+              writeStoredMemoryContextIds(restored.map((m) => m.id));
+            }
+          }
+        }
+      )
+      .catch(() => {
+        // API unreachable on mount — selection stays empty.
+        // Saved IDs remain in localStorage for the next page load attempt.
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fetch the backend-configured default Ollama model name once on mount.
   // Used purely for display in the ChatPanel header pill — no functional impact.
   // A failed fetch leaves defaultOllamaModel as null; ChatPanel shows "default" label.
@@ -157,24 +254,55 @@ export default function DashboardPage() {
 
   // Toggle a memory note in/out of the chat context selection.
   // If the note is already selected, remove it; otherwise add it.
+  // Persists the new set of IDs to localStorage (content never stored there).
   // Activity events log the title only — content is never logged.
   function handleMemoryContextToggle(item: MemoryContextItem): void {
     setSelectedMemoryContext((prev) => {
       const exists = prev.some((m) => m.id === item.id);
       if (exists) {
         handleActivity(`Memory removed from context: ${item.title}`, "info");
-        return prev.filter((m) => m.id !== item.id);
+        const next = prev.filter((m) => m.id !== item.id);
+        // Persist updated IDs — remove the key when selection becomes empty
+        if (next.length === 0) {
+          clearStoredMemoryContextIds();
+        } else {
+          writeStoredMemoryContextIds(next.map((m) => m.id));
+        }
+        return next;
       } else {
         handleActivity(`Memory included in context: ${item.title}`, "info");
-        return [...prev, item];
+        const next = [...prev, item];
+        writeStoredMemoryContextIds(next.map((m) => m.id));
+        return next;
       }
     });
   }
 
   // Clear all selected memory notes from the chat context.
+  // Also removes the persisted IDs from localStorage.
   function handleMemoryContextClear(): void {
     setSelectedMemoryContext([]);
+    clearStoredMemoryContextIds();
     handleActivity("Memory context cleared", "info");
+  }
+
+  // Called by MemoryPanel after a memory note is successfully deleted.
+  // If the deleted note was in the selected context, removes it from state
+  // and updates localStorage immediately — no stale IDs left after delete.
+  // No Activity Log event here (MemoryPanel already logs the delete).
+  function handleMemoryDeleted(id: string): void {
+    setSelectedMemoryContext((prev) => {
+      const next = prev.filter((m) => m.id !== id);
+      // Only touch localStorage if the deleted note was actually selected
+      if (next.length !== prev.length) {
+        if (next.length === 0) {
+          clearStoredMemoryContextIds();
+        } else {
+          writeStoredMemoryContextIds(next.map((m) => m.id));
+        }
+      }
+      return next;
+    });
   }
 
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
@@ -480,7 +608,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.9.1 — memory opt-in context
+          v0.9.2 — persistent memory context
         </div>
       </aside>
 
@@ -517,6 +645,7 @@ export default function DashboardPage() {
               selectedMemoryIds={new Set(selectedMemoryContext.map((m) => m.id))}
               onToggleMemoryContext={handleMemoryContextToggle}
               onClearMemoryContext={handleMemoryContextClear}
+              onMemoryDeleted={handleMemoryDeleted}
             />
           </section>
         ) : (

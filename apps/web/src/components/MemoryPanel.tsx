@@ -78,6 +78,11 @@ interface MemoryPanelProps {
 
   // Clear all selected memory notes from chat context.
   onClearMemoryContext?: () => void;
+
+  // Called after a memory note is successfully deleted from the backend.
+  // Allows page.tsx to immediately remove the deleted note from the chat context
+  // selection and localStorage — no stale IDs after delete.
+  onMemoryDeleted?: (id: string) => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -87,6 +92,7 @@ export default function MemoryPanel({
   selectedMemoryIds = new Set(),
   onToggleMemoryContext,
   onClearMemoryContext,
+  onMemoryDeleted,
 }: MemoryPanelProps) {
   // ── Data state ──────────────────────────────────────────────────────────────
   const [memories, setMemories] = useState<MemoryItem[]>([]);
@@ -177,6 +183,9 @@ export default function MemoryPanel({
       }
       setMemories((prev) => prev.filter((m) => m.id !== item.id));
       onActivity?.(`Memory deleted: ${item.title}`, "info");
+      // Notify parent so it can remove the deleted note from selected context
+      // and localStorage immediately — no stale IDs left after delete.
+      onMemoryDeleted?.(item.id);
     } catch {
       alert("Could not reach the Jarvis API.");
     }

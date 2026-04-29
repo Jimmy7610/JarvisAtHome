@@ -474,7 +474,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.9.1"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "0.9.2"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>
