@@ -1,7 +1,7 @@
 # Local TTS Roadmap
 
 **Last updated:** 2026-04-28  
-**Status:** Windows setup helper added (v0.5.7) — Piper binary not bundled, optional PowerShell script automates download
+**Status:** Piper setup checklist added (v0.5.8) — official URL selection documented, next step is to fill URLs and run the setup script
 
 ## Goal
 
@@ -81,7 +81,15 @@ JSON API wrapper).
    - `docs/setup/local-tts-piper-env-example.ps1` — reference for env var setup.
    - `docs/setup/local-tts-server.md` section I — full explanation.
 
-6. **Voice selector** — when the local provider is active, optionally replace the
+6. **Piper setup checklist** ✓ (v0.5.8):
+   - `docs/setup/piper-windows-checklist.md` — complete step-by-step guide.
+   - Covers official URL sources (GitHub releases, HuggingFace piper-voices).
+   - Voice selection guidance — clear/calm English, no movie imitation.
+   - How to fill `scripts/setup-piper-windows.ps1` URL variables.
+   - Start wrapper, connect API, test commands, cleanup instructions.
+   - Setup script updated to reference checklist in its placeholder error output.
+
+7. **Voice selector** — when the local provider is active, optionally replace the
    browser voice `<select>` with a list of available Piper/Kokoro voices fetched
    from `GET /tts/voices` (a future endpoint).
 

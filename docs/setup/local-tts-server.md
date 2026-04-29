@@ -411,3 +411,20 @@ For a reference of all the env vars, see `docs/setup/local-tts-piper-env-example
 - `*.onnx`, `*.onnx.json`, `*.wav`, `*.mp3` are all gitignored.
 - `apps/api/.env` is gitignored — your local config is never committed.
 - Run `git status` after setup to confirm nothing unexpected is staged.
+
+---
+
+## J. v0.5.8 Piper Windows checklist (step-by-step guide)
+
+A dedicated step-by-step guide covering official URL selection, voice choice,
+script setup, and local testing:
+
+**`docs/setup/piper-windows-checklist.md`**
+
+Read this before filling in the URL variables in the setup script.  It explains:
+
+- Where to find official Piper release and voice URLs (sections C, D, F)
+- Which voice to choose and voice direction notes (section E)
+- How to fill in `scripts/setup-piper-windows.ps1` (section F)
+- How to start the wrapper and test it (sections H, J)
+- Cleanup and switching back to browser TTS (section K)

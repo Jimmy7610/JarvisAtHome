@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Jarvis v0.5.7 - optional Piper TTS setup helper for Windows.
+    Jarvis v0.5.8 - optional Piper TTS setup helper for Windows.
 
 .DESCRIPTION
     Downloads the Piper TTS binary and one English voice model into the
@@ -80,7 +80,7 @@ $VoiceJson     = Join-Path $VoicesDir $VoiceConfigName
 
 Write-Host ""
 Write-Host "=================================================================" -ForegroundColor Cyan
-Write-Host "  Jarvis v0.5.7 - Piper TTS Windows Setup Helper" -ForegroundColor Cyan
+Write-Host "  Jarvis v0.5.8 - Piper TTS Windows Setup Helper" -ForegroundColor Cyan
 Write-Host "=================================================================" -ForegroundColor Cyan
 Write-Host "  Repo root : $RepoRoot"
 Write-Host "  Piper dir : $PiperDir"
@@ -98,18 +98,25 @@ if ($VoiceConfigUrl -like "*$placeholder*") { $urlsOk = $false; Write-Warning "`
 
 if (-not $urlsOk) {
     Write-Host ""
-    Write-Host "ACTION REQUIRED:" -ForegroundColor Yellow
-    Write-Host "  Open scripts\setup-piper-windows.ps1 in a text editor and fill" -ForegroundColor Yellow
-    Write-Host "  in the three URL variables near the top of the file:" -ForegroundColor Yellow
+    Write-Host "ACTION REQUIRED - URLs are not filled in yet." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  `$PiperZipUrl    - download URL for piper_windows_amd64.zip" -ForegroundColor Yellow
-    Write-Host "                    from https://github.com/rhasspy/piper/releases" -ForegroundColor Yellow
+    Write-Host "  Step 1: Read the setup checklist:" -ForegroundColor White
+    Write-Host "    docs\setup\piper-windows-checklist.md" -ForegroundColor Cyan
+    Write-Host "    Sections F and G explain exactly where to find each URL." -ForegroundColor White
     Write-Host ""
-    Write-Host "  `$VoiceModelUrl  - download URL for the .onnx voice file" -ForegroundColor Yellow
-    Write-Host "  `$VoiceConfigUrl - download URL for the .onnx.json config file" -ForegroundColor Yellow
-    Write-Host "                    from https://huggingface.co/rhasspy/piper-voices" -ForegroundColor Yellow
+    Write-Host "  Step 2: Open this script in a text editor:" -ForegroundColor White
+    Write-Host "    scripts\setup-piper-windows.ps1" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Then run this script again." -ForegroundColor Yellow
+    Write-Host "  Step 3: Fill in the three URL variables near line 55:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "    `$PiperZipUrl    - piper_windows_amd64.zip download URL" -ForegroundColor Yellow
+    Write-Host "                      from https://github.com/rhasspy/piper/releases" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "    `$VoiceModelUrl  - voice .onnx download URL" -ForegroundColor Yellow
+    Write-Host "    `$VoiceConfigUrl - voice .onnx.json download URL" -ForegroundColor Yellow
+    Write-Host "                      from https://huggingface.co/rhasspy/piper-voices" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Step 4: Run this script again." -ForegroundColor White
     Write-Host ""
     exit 1
 }

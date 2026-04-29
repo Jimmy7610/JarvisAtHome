@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.5.7)
+## What Jarvis can do right now (v0.5.8)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -39,6 +39,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Local TTS setup guide and mock server (v0.5.5)** — `docs/setup/local-tts-server.md` documents the full architecture, safety rules, Piper/Kokoro overview, environment configuration, and step-by-step test instructions. A zero-dependency development mock server (`scripts/local-tts-mock-server.mjs`) returns a 440 Hz WAV beep so the complete audio transport path can be tested without installing any real TTS engine. Run it with `npm run dev:tts-mock`. Piper and Kokoro are still not bundled.
 - **Piper TTS HTTP wrapper foundation (v0.5.6)** — `scripts/local-tts-piper-server.mjs` is a zero-dependency Node.js HTTP wrapper around the Piper binary. Download the Piper binary and an ONNX voice model separately, set `PIPER_BIN` and `PIPER_VOICE_MODEL` environment variables, and run `npm run dev:tts-piper`. The server listens on `http://127.0.0.1:5005`, accepts `POST /speak`, spawns Piper with `--output_file` (reliable WAV output across all platforms), and returns `audio/wav`. No Piper binary is bundled — see `docs/setup/local-tts-server.md` section H for the full Windows setup guide.
 - **Windows Piper setup helper (v0.5.7)** — `scripts/setup-piper-windows.ps1` is an optional PowerShell script that automates the Piper download and directory setup. Fill in the three URL variables at the top of the script (Piper release zip URL and voice model URLs from the official sources), then run `powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1`. The script creates gitignored `local-tts/piper/` and `local-tts/voices/` directories, downloads only missing files, and prints the exact env var commands and `.env` settings you need. If URLs are still placeholders the script exits safely with instructions. No binaries or models are bundled in the repo.
+- **Piper Windows setup checklist (v0.5.8)** — `docs/setup/piper-windows-checklist.md` is a step-by-step guide for the complete Piper installation process. It covers where to find official Piper release and voice model URLs (GitHub releases, HuggingFace rhasspy/piper-voices), how to choose a voice (clear/calm English, no fictional character imitation), how to fill in the setup script URL variables, and how to test with PowerShell and curl commands. Official URL selection remains manual — version tags change with each Piper release. The setup script placeholder error output now references this checklist directly.
 
 ## Prerequisites
 
