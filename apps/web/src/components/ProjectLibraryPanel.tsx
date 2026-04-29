@@ -3,6 +3,7 @@
 // Project Library panel — read-only browser for workspace/projects/.
 // Lists top-level projects, lets the user drill into files, and previews text files.
 // v0.7.0: foundation — list projects, list files, read files. No writes.
+// v0.7.3: frontend search/filter on the loaded file list.
 
 import { useState, useCallback } from "react";
 
@@ -102,6 +103,10 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile, onAskAbo
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Search query — applies to the file list view only.
+  // Cleared automatically when switching projects or navigating back.
+  const [searchQuery, setSearchQuery] = useState("");
+
   // ─── Data fetchers ──────────────────────────────────────────────────────────
 
   const fetchProjects = useCallback(async () => {
@@ -199,10 +204,13 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile, onAskAbo
     setView({ kind: "projects" });
     setProjects(null);
     setError(null);
+    setSearchQuery("");
     void fetchProjects();
   }
 
   function handleSelectProject(projectName: string) {
+    // Clear search so we always start with a full list for a new project
+    setSearchQuery("");
     setView({ kind: "files", projectName });
     void fetchFiles(projectName);
   }
@@ -213,6 +221,7 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile, onAskAbo
   }
 
   function handleBackToProjects() {
+    setSearchQuery("");
     setView({ kind: "projects" });
     if (!projects) void fetchProjects();
   }
@@ -358,58 +367,113 @@ export default function ProjectLibraryPanel({ onActivity, onAttachFile, onAskAbo
     if (error) return renderError();
     if (!files) return null;
 
-    if (files.length === 0) {
-      return (
-        <div className="flex flex-col items-center justify-center flex-1 gap-2 px-4 text-center">
-          <span className="text-2xl">📭</span>
-          <p className="text-xs text-slate-400">No readable files found.</p>
-          <p className="text-xs text-slate-600">
-            Add .md, .ts, .json, or other text files.
-          </p>
-        </div>
-      );
-    }
-
     const projectName = view.kind === "files" ? view.projectName : "";
+    const trimmedQuery = searchQuery.trim().toLowerCase();
+    const isSearching = trimmedQuery.length > 0;
+
+    // When searching: show only file entries whose path or name matches.
+    // Directory header entries are hidden — they have no meaning without children.
+    // When not searching: show the full original list (files + directory headers).
+    const displayEntries = isSearching
+      ? files.filter(
+          (e) =>
+            e.type === "file" &&
+            (e.path.toLowerCase().includes(trimmedQuery) ||
+              e.name.toLowerCase().includes(trimmedQuery))
+        )
+      : files;
 
     return (
-      <ul className="overflow-y-auto flex-1 py-1">
-        {files.map((entry) => {
-          if (entry.type === "directory") {
-            return (
-              <li key={entry.path}>
-                <div className="flex items-center gap-2 px-3 py-1 opacity-70">
-                  <span className="text-xs shrink-0">📂</span>
-                  <span className="text-xs text-slate-400 truncate font-medium">
-                    {entry.path}
-                  </span>
-                </div>
-              </li>
-            );
-          }
+      <div className="flex flex-col flex-1 min-h-0">
+        {/* Search input — only shown when a project has files to search */}
+        {files.length > 0 && (
+          <div className="px-3 py-2 border-b border-slate-800 flex-shrink-0">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search project files…"
+              className="w-full rounded bg-slate-800/60 border border-slate-700 px-2.5 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors"
+            />
+            {/* Match count — only shown while a query is active */}
+            {isSearching && (
+              <p className="mt-1 text-xs text-slate-500">
+                {displayEntries.length === 0
+                  ? "No matching files."
+                  : `${displayEntries.length} match${displayEntries.length !== 1 ? "es" : ""}`}
+              </p>
+            )}
+          </div>
+        )}
 
-          return (
-            <li key={entry.path}>
+        {/* Empty project (no files at all) */}
+        {files.length === 0 && (
+          <div className="flex flex-col items-center justify-center flex-1 gap-2 px-4 text-center">
+            <span className="text-2xl">📭</span>
+            <p className="text-xs text-slate-400">No readable files found.</p>
+            <p className="text-xs text-slate-600">
+              Add .md, .ts, .json, or other text files.
+            </p>
+          </div>
+        )}
+
+        {/* File list — normal tree view or filtered flat results */}
+        {displayEntries.length > 0 ? (
+          <ul className="overflow-y-auto flex-1 py-1">
+            {displayEntries.map((entry) => {
+              // Directory header row (only visible when not searching)
+              if (entry.type === "directory") {
+                return (
+                  <li key={entry.path}>
+                    <div className="flex items-center gap-2 px-3 py-1 opacity-70">
+                      <span className="text-xs shrink-0">📂</span>
+                      <span className="text-xs text-slate-400 truncate font-medium">
+                        {entry.path}
+                      </span>
+                    </div>
+                  </li>
+                );
+              }
+
+              // Clickable file row
+              return (
+                <li key={entry.path}>
+                  <button
+                    onClick={() => handleSelectFile(projectName, entry.path)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800/60 text-left transition-colors group"
+                  >
+                    <span className="text-xs shrink-0">
+                      {fileIcon(entry.name)}
+                    </span>
+                    <span className="text-xs text-slate-300 truncate group-hover:text-cyan-300 transition-colors flex-1 min-w-0">
+                      {entry.path}
+                    </span>
+                    {entry.size !== undefined && (
+                      <span className="text-xs text-slate-600 shrink-0">
+                        {formatBytes(entry.size)}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          /* No search matches — only shown when a query produced zero results */
+          isSearching && (
+            <div className="flex flex-col items-center justify-center flex-1 gap-1 px-4 text-center">
+              <span className="text-lg">🔍</span>
+              <p className="text-xs text-slate-500">No matching files.</p>
               <button
-                onClick={() => handleSelectFile(projectName, entry.path)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800/60 text-left transition-colors group"
+                onClick={() => setSearchQuery("")}
+                className="text-xs text-slate-600 hover:text-cyan-400 transition-colors"
               >
-                <span className="text-xs shrink-0">
-                  {fileIcon(entry.name)}
-                </span>
-                <span className="text-xs text-slate-300 truncate group-hover:text-cyan-300 transition-colors flex-1 min-w-0">
-                  {entry.path}
-                </span>
-                {entry.size !== undefined && (
-                  <span className="text-xs text-slate-600 shrink-0">
-                    {formatBytes(entry.size)}
-                  </span>
-                )}
+                Clear search
               </button>
-            </li>
-          );
-        })}
-      </ul>
+            </div>
+          )
+        )}
+      </div>
     );
   }
 

@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.7.2)
+## What Jarvis can do right now (v0.7.3)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -45,6 +45,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Project Library (v0.7.0)** — a read-only panel in the right sidebar that browses `workspace/projects/`. Click a project to list its text files recursively; click a file to read it. Supports `.md`, `.ts`, `.tsx`, `.js`, `.json`, `.yaml`, `.css`, `.html`, `.sh`, `.ps1`, and more. Binary files, build artifacts, and `node_modules` are excluded. Files are capped at 200 KB. No writes — the panel is a viewer only. Backend routes: `GET /projects`, `GET /projects/:name`, `GET /projects/:name/file`. All paths are sandboxed with traversal protection.
 - **Attach Project Library file to chat (v0.7.1)** — click "Attach" on any previewed project file to queue its content for the next message. An indigo attachment chip appears above the chat input showing the project and file path with a remove button. When sent, the file content is prepended to the API request in a clearly labelled fenced block; the user bubble shows only the typed message and a small label. The attachment clears automatically after send. Temporary one-message context only — no RAG, no vector DB, no long-term memory.
 - **Ask Jarvis about this project file (v0.7.2)** — click "Ask Jarvis" on any previewed project file to attach it AND prefill the chat input with `Explain this project file and suggest safe improvements.` Edit the question as desired and press Send. Reuses the same `prefillInput` mechanism as the WorkspacePanel "Ask Jarvis about this file" feature — no new ChatPanel props needed. Project Library remains read-only.
+- **Project Library search (v0.7.3)** — a search input above the project file list filters files by name or relative path as you type. Case-insensitive substring match. Shows a match count while a query is active and a "No matching files." empty state with a clear button when nothing matches. Directory header rows are hidden during search (flat results only). Clicking a search result opens the file normally — Attach and Ask Jarvis still work. Frontend-only filter over the already-loaded file list; no backend round-trip per keystroke. Search clears automatically when switching projects.
 
 ## Prerequisites
 
