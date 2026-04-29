@@ -311,13 +311,47 @@ Run `git status` to confirm nothing is staged before any commit.
 
 ---
 
+## L. Daily start (after Piper is installed)
+
+Once Piper is installed and `apps/api/.env` is configured, use the quick
+launcher to start everything with one command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1
+```
+
+This opens two PowerShell windows:
+- **Window 1:** Piper TTS wrapper on http://127.0.0.1:5005
+- **Window 2:** Jarvis dev stack on http://localhost:3000
+
+Wait a few seconds for both to start, then open http://localhost:3000.
+
+**Manual alternative (two terminals):**
+
+Terminal 1:
+```powershell
+$env:PIPER_BIN="C:\Users\Jimmy\Documents\GitHub\Jarvis\local-tts\piper\piper\piper.exe"
+$env:PIPER_VOICE_MODEL="C:\Users\Jimmy\Documents\GitHub\Jarvis\local-tts\voices\en_GB-alan-medium.onnx"
+$env:PIPER_VOICE_CONFIG="C:\Users\Jimmy\Documents\GitHub\Jarvis\local-tts\voices\en_GB-alan-medium.onnx.json"
+npm run dev:tts-piper
+```
+
+Terminal 2:
+```powershell
+npm run dev
+```
+
+---
+
 ## Quick reference
 
 | Task | Command |
 |---|---|
 | Run setup script | `powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1` |
-| Start Piper wrapper | Set `$env:PIPER_BIN` + `$env:PIPER_VOICE_MODEL`, then `npm run dev:tts-piper` |
+| Start everything (launcher) | `powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1` |
+| Start Piper wrapper only | `.\scripts\start-jarvis-with-piper.ps1 -SkipJarvis` |
+| Start Jarvis only | `.\scripts\start-jarvis-with-piper.ps1 -SkipPiper` |
 | Start mock TTS (no Piper needed) | `npm run dev:tts-mock` |
 | Check wrapper status | `curl.exe http://localhost:5005/` |
-| Full Jarvis stack | `npm run dev` |
+| Full Jarvis stack only | `npm run dev` |
 | Disable local TTS | Set `LOCAL_TTS_ENABLED=false` in `apps/api/.env` |

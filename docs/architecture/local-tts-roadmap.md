@@ -1,7 +1,7 @@
 # Local TTS Roadmap
 
 **Last updated:** 2026-04-29  
-**Status:** Official Piper URLs selected and verified (v0.5.9) — run the setup script to download and install locally
+**Status:** Quick launcher added (v0.5.10) — full local TTS dev workflow starts with one command
 
 ## Goal
 
@@ -98,7 +98,17 @@ JSON API wrapper).
    - `-DryRun` parameter added to script for safe preview before download.
    - Next step: run `powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1`
 
-8. **Voice selector** — when the local provider is active, optionally replace the
+8. **Quick launcher** ✓ (v0.5.10):
+   - `scripts/start-jarvis-with-piper.ps1` — opens Piper + Jarvis dev windows.
+   - Checks that Piper files exist (exits with setup instructions if missing).
+   - Checks whether port 5005 is already in use (skips Piper window gracefully).
+   - Warns if `apps/api/.env` is missing or `LOCAL_TTS_ENABLED=true` is absent.
+   - `-SkipPiper` and `-SkipJarvis` optional flags for partial starts.
+   - No downloads, no installs, no admin required.
+   - Section L added to `docs/setup/piper-windows-checklist.md` (daily start).
+   - Section L added to `docs/setup/local-tts-server.md` (launcher docs).
+
+9. **Voice selector** — when the local provider is active, optionally replace the
    browser voice `<select>` with a list of available Piper/Kokoro voices fetched
    from `GET /tts/voices` (a future endpoint).
 

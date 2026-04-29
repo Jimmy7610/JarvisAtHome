@@ -453,3 +453,70 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1 -DryR
 ```
 
 Setup remains manual — run the script yourself when you are ready to download.
+
+---
+
+## L. v0.5.10 Quick launcher (Jarvis + Piper together)
+
+Once Piper is installed, starting the full local TTS dev environment requires
+two terminals.  The quick launcher opens both in separate PowerShell windows
+with a single command.
+
+**Script location:** `scripts/start-jarvis-with-piper.ps1`
+
+### What it starts
+
+| Window | Command | URL |
+|---|---|---|
+| Piper TTS wrapper | `npm run dev:tts-piper` | http://127.0.0.1:5005 |
+| Jarvis dev stack | `npm run dev` | http://localhost:3000 |
+
+### Prerequisites
+
+Before running the launcher:
+
+1. Piper must be installed — run `scripts/setup-piper-windows.ps1` first.
+2. `apps/api/.env` must exist and contain:
+   ```env
+   LOCAL_TTS_ENABLED=true
+   LOCAL_TTS_BASE_URL=http://localhost:5005
+   LOCAL_TTS_PROVIDER=piper
+   ```
+
+### How to run
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1
+```
+
+Optional flags:
+
+```powershell
+# Skip Piper window (Jarvis only)
+powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1 -SkipPiper
+
+# Skip Jarvis window (Piper only)
+powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1 -SkipJarvis
+
+# Dry-check: run prerequisite checks without opening any windows
+powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1 -SkipPiper -SkipJarvis
+```
+
+### What the launcher checks
+
+- That `local-tts\piper\piper\piper.exe` exists.
+- That `local-tts\voices\en_GB-alan-medium.onnx` and `.onnx.json` exist.
+- Whether port 5005 is already in use (skips Piper window if so).
+- Whether `apps\api\.env` exists and contains `LOCAL_TTS_ENABLED=true`.
+
+If Piper files are missing, the launcher exits with a helpful message pointing
+to `scripts/setup-piper-windows.ps1`.
+
+### What it does NOT do
+
+- Does not download anything.
+- Does not install anything.
+- Does not require admin privileges.
+- Does not commit any files.
+
+Safety reminders are printed at the end of every run.
