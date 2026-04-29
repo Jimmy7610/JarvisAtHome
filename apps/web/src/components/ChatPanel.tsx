@@ -644,6 +644,7 @@ export default function ChatPanel({
   onActivity,
   onOpenWorkspaceFile,
   modelOverride,
+  defaultModel,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -675,6 +676,10 @@ export default function ChatPanel({
   // When present, this model name is forwarded to the /chat/stream endpoint.
   // If null/undefined the backend resolves the model using its configured default.
   modelOverride?: string | null;
+  // Backend-configured default Ollama model name (e.g. "qwen2.5-coder:latest").
+  // Fetched once by page.tsx from /settings. Used only for display in the header pill.
+  // If null (API not yet reachable) the pill shows "default model" as a fallback label.
+  defaultModel?: string | null;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -1738,14 +1743,31 @@ export default function ChatPanel({
             )}
           </p>
         </div>
-        <button
-          onClick={clearChat}
-          disabled={loading}
-          className="text-xs text-slate-600 hover:text-slate-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Clear chat history"
-        >
-          Clear chat
-        </button>
+        {/* Right side: model pill + clear button */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Model indicator pill — shows effective model and source */}
+          <div className="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-slate-800/80 border border-slate-700/60 select-none">
+            <span className="text-slate-600">Ollama</span>
+            <span className="text-slate-700">·</span>
+            <span className="font-mono text-cyan-400 max-w-[11rem] truncate">
+              {modelOverride ?? defaultModel ?? "default model"}
+            </span>
+            {modelOverride && (
+              <>
+                <span className="text-slate-700">·</span>
+                <span className="text-amber-400/80">override</span>
+              </>
+            )}
+          </div>
+          <button
+            onClick={clearChat}
+            disabled={loading}
+            className="text-xs text-slate-600 hover:text-slate-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Clear chat history"
+          >
+            Clear chat
+          </button>
+        </div>
       </div>
 
       {/* Message list */}

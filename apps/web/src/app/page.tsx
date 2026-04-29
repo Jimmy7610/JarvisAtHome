@@ -66,6 +66,12 @@ export default function DashboardPage() {
   const [selectedModelOverride, setSelectedModelOverride] =
     useState<string | null>(null);
 
+  // Backend-configured default Ollama model name (e.g. "qwen2.5-coder:latest").
+  // Fetched once from /settings on mount and used only for display in ChatPanel header.
+  // Null while loading or if the API is unreachable — ChatPanel shows "default" label.
+  const [defaultOllamaModel, setDefaultOllamaModel] =
+    useState<string | null>(null);
+
   // Right sidebar tab — which panel is currently shown.
   // Default "workspace" so file tools are immediately accessible.
   const [rightTab, setRightTab] = useState<
@@ -93,6 +99,22 @@ export default function DashboardPage() {
     } catch {
       // localStorage unavailable — ignore silently
     }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch the backend-configured default Ollama model name once on mount.
+  // Used purely for display in the ChatPanel header pill — no functional impact.
+  // A failed fetch leaves defaultOllamaModel as null; ChatPanel shows "default" label.
+  useEffect(() => {
+    fetch(`${API_URL}/settings`)
+      .then((r) => r.json())
+      .then((d: { ok: boolean; ollama?: { defaultModel: string } }) => {
+        if (d.ok && d.ollama?.defaultModel) {
+          setDefaultOllamaModel(d.ollama.defaultModel);
+        }
+      })
+      .catch(() => {
+        // API unreachable — ChatPanel falls back to "default model" label
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Called by SettingsPanel when the user picks a model from the dropdown.
@@ -411,7 +433,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.8.1 — model selector
+          v0.8.2 — model indicator
         </div>
       </aside>
 
@@ -434,6 +456,7 @@ export default function DashboardPage() {
                 onActivity={handleActivity}
                 onOpenWorkspaceFile={handleOpenWorkspaceFile}
                 modelOverride={selectedModelOverride}
+                defaultModel={defaultOllamaModel}
               />
             )}
           </section>

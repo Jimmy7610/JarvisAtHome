@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.8.1)
+## What Jarvis can do right now (v0.8.2)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -50,6 +50,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Right sidebar tabs (v0.7.5)** — the four right-sidebar panels (System Status, Activity Log, Workspace Files, Project Library) are now presented as a compact tab bar instead of a crowded vertical stack. Only one panel is visible at a time, giving each the full sidebar height (~830 px at 900 px screen height vs. the previous 120–280 px). Active tab is highlighted with a cyan underline. Default tab is Workspace. No panel components were changed — only the layout in `page.tsx`.
 - **Settings Panel foundation (v0.8.0, read-only)** — clicking Settings in the left sidebar now opens a dedicated Settings view instead of the chat area. The panel shows five read-only cards: Runtime (app/API version, environment), Ollama (provider, base URL, active model, connection status), Safety (file write approval, disabled email/terminal/cloud), Workspace (feature flags per capability), and Feature Status (completed and planned milestones). Data is fetched from a new `GET /settings` backend endpoint that returns only non-secret config. No editing, no `.env` writes, no secrets exposed. Clicking Dashboard or Chat returns to the normal chat view.
 - **Ollama model selector (v0.8.1)** — the Settings → Ollama card now includes a live dropdown of all installed Ollama models. Selecting a model saves it to browser `localStorage` under the key `jarvis:selected-ollama-model` and all subsequent chat messages use that model. The active model row shows which model is in use and a source badge indicates whether it comes from the default backend config or a browser override. A "Reset to default" button appears when an override is active and clears it from `localStorage`. Does not modify `.env` or any backend configuration. If Ollama is offline the dropdown is replaced with an informational note.
+- **Chat active model indicator (v0.8.2)** — the ChatPanel header now shows a compact pill displaying the effective Ollama model name and its source: `Ollama · qwen2.5-coder:latest · override` when a browser model override is active, or `Ollama · qwen2.5-coder:latest` when using the backend default. If the API has not yet responded the pill shows `Ollama · default model`. The pill updates immediately when the user changes or resets the model in Settings. No new backend routes — the model name is fetched once from the existing `/settings` endpoint on page load.
 
 ## Prerequisites
 
@@ -186,6 +187,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.7 ✓ | Project Library — read-only browser for workspace/projects/, attach file to chat |
 | v0.8 ✓ | Settings Panel — read-only config/status overview; Settings nav item functional |
 | v0.8.1 ✓ | Ollama model selector — browser localStorage preference, no .env writes |
+| v0.8.2 ✓ | Chat model indicator — header pill shows effective model name and source |
 
 ## Keyboard shortcuts
 
