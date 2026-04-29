@@ -413,6 +413,11 @@ function matchProposalBlock(
 interface ChatMessage {
   role: "user" | "assistant" | "error" | "cancelled";
   text: string;
+  // The Ollama model that generated this message (assistant messages only).
+  // Set from the "done" stream event (actual resolved backend model) or, for
+  // messages loaded from SQLite, from BackendMessage.model.
+  // Undefined for user messages, error/cancelled bubbles, and the greeting.
+  model?: string;
 }
 
 // Shape expected by the API history field
@@ -624,6 +629,8 @@ async function loadSessionFromBackend(
     const msgs: ChatMessage[] = data.messages.map((m) => ({
       role: m.role,
       text: m.content,
+      // Carry model from the persisted record when available
+      ...(m.model ? { model: m.model } : {}),
     }));
     // Treat an empty message list the same as "nothing from backend"
     return msgs.length > 0 ? msgs : null;
@@ -1626,6 +1633,21 @@ export default function ChatPanel({
       } else if (assistantText) {
         // Persist successful assistant response with model name if known
         if (sid !== null) void persistMessage(sid, "assistant", assistantText, modelName);
+        // Stamp the actual resolved model (from the "done" event) on the in-memory
+        // message so the per-message model indicator renders correctly.
+        // Fallback chain: done model → user's override → configured default → nothing.
+        const effectiveModel =
+          modelName ?? modelOverride ?? defaultModel ?? undefined;
+        if (effectiveModel) {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last.role === "assistant") {
+              updated[updated.length - 1] = { ...last, model: effectiveModel };
+            }
+            return updated;
+          });
+        }
         // Scan for a jarvis-write-proposal block and create a pending proposal if found
         void detectAndPropose(assistantText);
         // Speak the response when the user has voice replies enabled.
@@ -1660,6 +1682,19 @@ export default function ChatPanel({
         if (sid !== null) {
           if (assistantText) {
             void persistMessage(sid, "assistant", assistantText, modelName);
+            // Stamp model on the partial message that was kept in state
+            const effectiveModel =
+              modelName ?? modelOverride ?? defaultModel ?? undefined;
+            if (effectiveModel) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, model: effectiveModel };
+                }
+                return updated;
+              });
+            }
           } else {
             void persistMessage(sid, "cancelled", "Response cancelled.");
           }
@@ -1783,6 +1818,7 @@ export default function ChatPanel({
               key={i}
               text={msg.text}
               showCursor={streaming && isLast}
+              model={msg.model}
             />
           );
         })}
@@ -2275,9 +2311,13 @@ function parseProposalBlock(text: string): {
 function AssistantMessage({
   text,
   showCursor,
+  model,
 }: {
   text: string;
   showCursor?: boolean;
+  // The Ollama model that generated this response (from the "done" stream event
+  // or loaded from persisted history). Undefined for the greeting and old messages.
+  model?: string;
 }) {
   const proposal = parseProposalBlock(text);
 
@@ -2287,7 +2327,13 @@ function AssistantMessage({
         J
       </div>
       <div className="flex-1">
-        <p className="text-xs text-cyan-400 font-medium mb-1">Jarvis</p>
+        {/* Message label — "Jarvis · <model>" when model is known */}
+        <p className="text-xs text-cyan-400 font-medium mb-1">
+          Jarvis
+          {model && (
+            <span className="font-normal text-slate-600 ml-1">· {model}</span>
+          )}
+        </p>
 
         {proposal ? (
           /* Message contains a write proposal — split into text + callout + text */
