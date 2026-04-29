@@ -63,6 +63,13 @@ function fileIcon(name: string): string {
 
 type Props = {
   onActivity?: (text: string, type?: "info" | "write" | "error") => void;
+  /** Called when the user clicks "Attach to chat" on a previewed file. */
+  onAttachFile?: (
+    projectName: string,
+    filePath: string,
+    content: string,
+    size: number
+  ) => void;
 };
 
 type PanelView =
@@ -70,7 +77,7 @@ type PanelView =
   | { kind: "files"; projectName: string }
   | { kind: "file"; projectName: string; filePath: string };
 
-export default function ProjectLibraryPanel({ onActivity }: Props) {
+export default function ProjectLibraryPanel({ onActivity, onAttachFile }: Props) {
   // Which view is currently shown
   const [view, setView] = useState<PanelView>({ kind: "projects" });
 
@@ -399,16 +406,42 @@ export default function ProjectLibraryPanel({ onActivity }: Props) {
     if (loading) return renderLoading();
     if (error) return renderError();
 
+    // The "Attach to chat" button is only shown when a file is fully loaded and
+    // the parent has provided an onAttachFile callback.
+    const canAttach =
+      onAttachFile !== undefined &&
+      view.kind === "file" &&
+      fileContent !== null &&
+      !loading;
+
+    function handleAttach() {
+      if (!canAttach || view.kind !== "file") return;
+      onAttachFile!(view.projectName, view.filePath, fileContent!, fileSize ?? 0);
+      onActivity?.(
+        `Attached project file ${view.projectName}/${view.filePath} to chat`,
+        "info"
+      );
+    }
+
     return (
       <div className="flex flex-col flex-1 min-h-0">
-        {/* File metadata */}
-        {fileSize !== null && (
-          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-slate-800 flex-shrink-0">
-            <span className="text-xs text-slate-500">
-              {formatBytes(fileSize)}
-            </span>
-          </div>
-        )}
+        {/* File metadata + attach action */}
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800 flex-shrink-0">
+          <span className="text-xs text-slate-500">
+            {fileSize !== null ? formatBytes(fileSize) : ""}
+          </span>
+          {onAttachFile && (
+            <button
+              type="button"
+              onClick={handleAttach}
+              disabled={!canAttach}
+              title="Attach this file to the chat input"
+              className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0"
+            >
+              Attach to chat
+            </button>
+          )}
+        </div>
         {/* File content */}
         <div className="flex-1 overflow-y-auto">
           <pre className="px-3 py-2 text-xs text-slate-300 font-mono whitespace-pre-wrap break-words leading-relaxed">

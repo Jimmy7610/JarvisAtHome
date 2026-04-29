@@ -80,6 +80,32 @@ export default function DashboardPage() {
   // Set by ChatPanel after a draft write is approved; consumed by WorkspacePanel.
   const [openFileRequest, setOpenFileRequest] = useState<string | null>(null);
 
+  // Project Library file attached to chat — set by ProjectLibraryPanel, consumed by ChatPanel.
+  // Cleared immediately by ChatPanel when it sends the message.
+  const [attachedProjectFile, setAttachedProjectFile] = useState<{
+    projectName: string;
+    path: string;
+    content: string;
+    size: number;
+  } | null>(null);
+
+  function handleAttachProjectFile(
+    projectName: string,
+    filePath: string,
+    content: string,
+    size: number
+  ): void {
+    setAttachedProjectFile({ projectName, path: filePath, content, size });
+    handleActivity(
+      `Attached project file ${projectName}/${filePath} to chat`,
+      "info"
+    );
+  }
+
+  function handleClearAttachedProjectFile(): void {
+    setAttachedProjectFile(null);
+  }
+
   function handleAttachFile(path: string, content: string, size: number): void {
     setAttachment({ path, content, size });
   }
@@ -320,6 +346,8 @@ export default function DashboardPage() {
               onSessionUpdated={() => void fetchSessions()}
               attachment={attachment}
               onClearAttachment={handleClearAttachment}
+              attachedProjectFile={attachedProjectFile}
+              onClearAttachedProjectFile={handleClearAttachedProjectFile}
               prefillInput={prefillInput}
               onConsumePrefill={handleConsumePrefill}
               onActivity={handleActivity}
@@ -350,7 +378,10 @@ export default function DashboardPage() {
 
           {/* ProjectLibraryPanel — flex-1 min-h-0 fills remaining sidebar space */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            <ProjectLibraryPanel onActivity={handleActivity} />
+            <ProjectLibraryPanel
+              onActivity={handleActivity}
+              onAttachFile={handleAttachProjectFile}
+            />
           </div>
         </aside>
       </main>

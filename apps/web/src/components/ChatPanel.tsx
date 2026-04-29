@@ -637,6 +637,8 @@ export default function ChatPanel({
   onSessionUpdated,
   attachment,
   onClearAttachment,
+  attachedProjectFile,
+  onClearAttachedProjectFile,
   prefillInput,
   onConsumePrefill,
   onActivity,
@@ -647,8 +649,18 @@ export default function ChatPanel({
   onSessionUpdated?: () => void;
   // File attached via WorkspacePanel — prepended to the next outgoing message.
   attachment?: { path: string; content: string; size: number } | null;
-  // Called by ChatPanel immediately when it consumes the attachment in send().
+  // Called by ChatPanel immediately when it consumes the workspace attachment in send().
   onClearAttachment?: () => void;
+  // File attached via Project Library — prepended to the next outgoing message.
+  // Content is already loaded (fetched by ProjectLibraryPanel via the safe /projects route).
+  attachedProjectFile?: {
+    projectName: string;
+    path: string;
+    content: string;
+    size: number;
+  } | null;
+  // Called by ChatPanel immediately when it consumes the project file attachment in send().
+  onClearAttachedProjectFile?: () => void;
   // Suggested question set by "Ask Jarvis about this file". Applied once to the input field.
   prefillInput?: string | null;
   // Called after ChatPanel reads prefillInput so the parent can reset it to null.
@@ -1445,25 +1457,47 @@ export default function ChatPanel({
     setChatCopyError(null);
     setSpeechError(null);
 
-    // Snapshot and immediately clear the attachment so it cannot be sent twice
+    // Snapshot and immediately clear both attachments so neither can be sent twice
     const attachmentSnapshot = attachment ?? null;
     onClearAttachment?.();
+
+    const projectFileSnapshot = attachedProjectFile ?? null;
+    onClearAttachedProjectFile?.();
 
     // Capture history from current messages before the new user turn is added
     const history = buildHistory(messages);
     // Detect first user message so we can auto-title the session afterwards
     const isFirstUserMessage = !messages.some((m) => m.role === "user");
 
-    // Build the text shown in the UI bubble — typed message plus a small attachment label
-    const bubbleText = attachmentSnapshot
-      ? `${trimmed}\n\n[Attached: ${attachmentSnapshot.path}]`
-      : trimmed;
+    // Build the text shown in the UI bubble — typed message plus small attachment label(s).
+    // File content is NOT shown in the bubble to keep it readable.
+    let bubbleText = trimmed;
+    if (attachmentSnapshot) {
+      bubbleText += `\n\n[Attached workspace file: ${attachmentSnapshot.path}]`;
+    }
+    if (projectFileSnapshot) {
+      bubbleText += `\n\n[Attached project file: ${projectFileSnapshot.projectName}/${projectFileSnapshot.path}]`;
+    }
 
-    // Build the API message — includes file content in a fenced block when a file is attached
+    // Build the API message — prepend file context block(s) before the user's question.
+    // Workspace attachment goes first; project file goes on top (closest to the question).
     const fence = "```";
-    const apiMessage = attachmentSnapshot
-      ? `The user attached the following read-only workspace file:\n\nFile: ${attachmentSnapshot.path}\n\n${fence}\n${attachmentSnapshot.content}\n${fence}\n\n${trimmed}`
-      : trimmed;
+    let apiMessage = trimmed;
+    if (attachmentSnapshot) {
+      apiMessage =
+        `The user attached the following read-only workspace file:\n\n` +
+        `File: ${attachmentSnapshot.path}\n\n` +
+        `${fence}\n${attachmentSnapshot.content}\n${fence}\n\n` +
+        apiMessage;
+    }
+    if (projectFileSnapshot) {
+      apiMessage =
+        `The user attached the following read-only project file:\n\n` +
+        `Project: ${projectFileSnapshot.projectName}\n` +
+        `File: ${projectFileSnapshot.path}\n\n` +
+        `${fence}\n${projectFileSnapshot.content}\n${fence}\n\n` +
+        apiMessage;
+    }
 
     // Show user message immediately (bubble shows typed text + attachment label, not file content)
     setMessages((prev) => [...prev, { role: "user", text: bubbleText }]);
@@ -1927,7 +1961,7 @@ export default function ChatPanel({
 
       {/* Input bar */}
       <form onSubmit={send} className="px-6 py-4 border-t border-slate-800">
-        {/* Attachment pill — shown when a workspace file is queued for the next message */}
+        {/* Attachment pill — workspace file queued for the next message */}
         {attachment && (
           <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs">
             <span className="text-cyan-400 truncate">
@@ -1938,7 +1972,27 @@ export default function ChatPanel({
               type="button"
               onClick={onClearAttachment}
               className="flex-shrink-0 text-cyan-700 hover:text-cyan-400 leading-none"
-              aria-label="Remove attachment"
+              aria-label="Remove workspace attachment"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {/* Project file attachment pill — project library file queued for the next message */}
+        {attachedProjectFile && (
+          <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-xs">
+            <span className="text-indigo-300 truncate">
+              Project file:{" "}
+              <span className="font-medium">
+                {attachedProjectFile.projectName}/{attachedProjectFile.path}
+              </span>
+              <span className="text-indigo-500 ml-1">· Read-only · will be included in next message</span>
+            </span>
+            <button
+              type="button"
+              onClick={onClearAttachedProjectFile}
+              className="flex-shrink-0 text-indigo-600 hover:text-indigo-300 leading-none"
+              aria-label="Remove project file attachment"
             >
               ×
             </button>
