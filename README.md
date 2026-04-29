@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.8.3)
+## What Jarvis can do right now (v0.9.0)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -52,6 +52,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Ollama model selector (v0.8.1)** — the Settings → Ollama card now includes a live dropdown of all installed Ollama models. Selecting a model saves it to browser `localStorage` under the key `jarvis:selected-ollama-model` and all subsequent chat messages use that model. The active model row shows which model is in use and a source badge indicates whether it comes from the default backend config or a browser override. A "Reset to default" button appears when an override is active and clears it from `localStorage`. Does not modify `.env` or any backend configuration. If Ollama is offline the dropdown is replaced with an informational note.
 - **Chat active model indicator (v0.8.2)** — the ChatPanel header now shows a compact pill displaying the effective Ollama model name and its source: `Ollama · qwen2.5-coder:latest · override` when a browser model override is active, or `Ollama · qwen2.5-coder:latest` when using the backend default. If the API has not yet responded the pill shows `Ollama · default model`. The pill updates immediately when the user changes or resets the model in Settings. No new backend routes — the model name is fetched once from the existing `/settings` endpoint on page load.
 - **Per-message model stamp (v0.8.3)** — each assistant message now shows which Ollama model generated it: `Jarvis · qwen2.5-coder:latest`. The actual resolved model is captured from the `{ type: "done", model }` stream event (no backend changes needed — this data was already sent). Persisted messages reload their model stamp after page refresh. Messages without a stored model (the greeting, very old history) show just `Jarvis` without a stamp. When model is switched mid-session, earlier and later messages each retain their own correct stamp.
+- **Memory foundation (v0.9.0, manual-only)** — a local Memory area is now accessible from the left sidebar. The user can manually add, view, search, and delete memory notes in three categories: Note, Preference, and Project. Memories are stored in the existing local SQLite database (no new dependency). **Memory is manual-only in v0.9.0 — no automatic injection into the Ollama system prompt, no autonomous memory writes, no cloud services.** The Settings panel shows a Memory card confirming all safety flags. Activity Log events are emitted for add/delete (title only, never full content).
 
 ## Prerequisites
 
@@ -190,6 +191,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.8.1 ✓ | Ollama model selector — browser localStorage preference, no .env writes |
 | v0.8.2 ✓ | Chat model indicator — header pill shows effective model name and source |
 | v0.8.3 ✓ | Per-message model stamp — each assistant bubble shows its generating model |
+| v0.9 ✓ | Memory foundation — manual notes/preferences in local SQLite; no auto-injection |
 
 ## Keyboard shortcuts
 

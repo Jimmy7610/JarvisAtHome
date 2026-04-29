@@ -8,6 +8,7 @@ import SessionList, { type SessionRow } from "@/components/SessionList";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import ProjectLibraryPanel from "@/components/ProjectLibraryPanel";
 import SettingsPanel from "@/components/SettingsPanel";
+import MemoryPanel from "@/components/MemoryPanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -55,9 +56,9 @@ export default function DashboardPage() {
   // Activity log — newest event first, capped at 50 entries
   const [activities, setActivities] = useState<ActivityEvent[]>(INITIAL_ACTIVITIES);
 
-  // Main view — "chat" shows the ChatPanel; "settings" shows the SettingsPanel.
+  // Main view — switches the center area between Chat, Memory, and Settings.
   // Right sidebar is always visible regardless of which view is active.
-  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [view, setView] = useState<"chat" | "memory" | "settings">("chat");
 
   // Ollama model override — null means use the backend-resolved default.
   // Persisted in localStorage under OLLAMA_MODEL_KEY.
@@ -411,9 +412,14 @@ export default function DashboardPage() {
             label="Chat"
             onClick={() => setView("chat")}
           />
-          <NavItem label="Memory" disabled />
+          {/* Memory — now functional */}
+          <NavItem
+            label="Memory"
+            active={view === "memory"}
+            onClick={() => setView("memory")}
+          />
           <NavItem label="Files" disabled />
-          {/* Settings is now functional — switches center area to SettingsPanel */}
+          {/* Settings */}
           <NavItem
             label="Settings"
             active={view === "settings"}
@@ -433,13 +439,13 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.8.3 — message model stamp
+          v0.9.0 — memory foundation
         </div>
       </aside>
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Center area — switches between Chat and Settings */}
+        {/* Center area — switches between Chat, Memory, and Settings */}
         {view === "chat" ? (
           /* Chat area — ChatPanel remounts when activeSessionId changes (key prop) */
           <section className="flex-1 flex flex-col border-r border-slate-800">
@@ -459,6 +465,11 @@ export default function DashboardPage() {
                 defaultModel={defaultOllamaModel}
               />
             )}
+          </section>
+        ) : view === "memory" ? (
+          /* Memory area — manual notes and preferences, local SQLite only */
+          <section className="flex-1 flex flex-col border-r border-slate-800 overflow-hidden">
+            <MemoryPanel onActivity={handleActivity} />
           </section>
         ) : (
           /* Settings area — read-only config and status view */

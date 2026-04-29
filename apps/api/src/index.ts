@@ -12,6 +12,7 @@ import filesRouter from "./routes/files";
 import ttsRouter from "./routes/tts";
 import projectsRouter from "./routes/projects";
 import settingsRouter from "./routes/settings";
+import memoryRouter from "./routes/memory";
 
 const app = express();
 
@@ -58,6 +59,11 @@ app.use("/projects", projectsRouter);
 // Settings route — mounted at /settings
 // Returns safe, read-only config/feature-flag snapshot. No secrets exposed.
 app.use("/settings", settingsRouter);
+
+// Memory routes — mounted at /memory
+// Manual user-created notes/preferences. Never written autonomously by the AI.
+// Not injected into the Ollama system prompt in v0.9.0.
+app.use("/memory", memoryRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);

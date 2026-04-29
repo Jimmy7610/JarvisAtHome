@@ -336,7 +336,29 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── C. Safety ──────────────────────────────────────────────────── */}
+        {/* ── C. Memory ──────────────────────────────────────────────────── */}
+        <Card title="Memory">
+          <SettingRow label="Storage">
+            <Badge variant="local" label="local SQLite" />
+          </SettingRow>
+          <SettingRow label="Memory types">
+            <span className="text-xs text-slate-400">note · preference · project</span>
+          </SettingRow>
+          <SettingRow label="Auto memory injection">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+          <SettingRow label="Autonomous memory writing">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+          <SettingRow label="Manual add/delete">
+            <Badge variant="enabled" label="enabled" />
+          </SettingRow>
+          <SettingRow label="Sent to Ollama or cloud">
+            <Badge variant="disabled" label="never" />
+          </SettingRow>
+        </Card>
+
+        {/* ── D. Safety ──────────────────────────────────────────────────── */}
         <Card title="Safety">
           <SettingRow label="File write">
             <Badge variant="approval" />
@@ -361,7 +383,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── D. Workspace ───────────────────────────────────────────────── */}
+        {/* ── E. Workspace ───────────────────────────────────────────────── */}
         <Card title="Workspace">
           <SettingRow label="Workspace root">
             <MonoValue>{settings?.safety.workspaceLabel ?? "workspace/"}</MonoValue>
@@ -395,7 +417,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── E. Feature status ──────────────────────────────────────────── */}
+        {/* ── F. Feature status ──────────────────────────────────────────── */}
         <Card title="Feature Status">
           {/* Completed */}
           <SettingRow label="Chat (streaming)">
@@ -431,9 +453,12 @@ export default function SettingsPanel({
           <SettingRow label="Ollama model selector (browser)">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Memory foundation (manual, local SQLite)">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
-          <SettingRow label="Memory (local notes, past context)">
+          <SettingRow label="Memory → chat injection (opt-in)">
             <Badge variant="planned" />
           </SettingRow>
           <SettingRow label="Smart Home / Home Assistant">
@@ -446,7 +471,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.8.3"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "0.9.0"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

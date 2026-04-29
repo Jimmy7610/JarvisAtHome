@@ -35,6 +35,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_messages_session_created
     ON chat_messages(session_id, created_at);
+
+  -- Memory notes — manually created by the user, never written autonomously.
+  -- No automatic injection into the system prompt in v0.9.0.
+  CREATE TABLE IF NOT EXISTS memories (
+    id         TEXT PRIMARY KEY,
+    type       TEXT NOT NULL CHECK(type IN ('preference', 'project', 'note')),
+    title      TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_memories_type
+    ON memories(type);
 `);
 
 console.log(`[Jarvis] Database ready at ${config.dbPath}`);
