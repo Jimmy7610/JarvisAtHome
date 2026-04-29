@@ -652,6 +652,8 @@ export default function ChatPanel({
   onOpenWorkspaceFile,
   modelOverride,
   defaultModel,
+  memoryContext,
+  onClearMemoryContext,
 }: {
   // Called after a session title is successfully updated (e.g. auto-title after first message).
   // Parent uses this to refresh the session list without reloading the page.
@@ -687,6 +689,14 @@ export default function ChatPanel({
   // Fetched once by page.tsx from /settings. Used only for display in the header pill.
   // If null (API not yet reachable) the pill shows "default model" as a fallback label.
   defaultModel?: string | null;
+  // Memory notes the user has opted-in to include in chat context.
+  // Managed by page.tsx — these are prepended to the outgoing API message as explicit context.
+  // An empty array / undefined means no memory context is active.
+  // SAFETY: memory context is injected only when the user explicitly includes notes.
+  // The AI cannot add, edit, or inject memories autonomously.
+  memoryContext?: { id: string; type: string; title: string; content: string }[];
+  // Called when the user clicks "Clear all" on the memory context chip.
+  onClearMemoryContext?: () => void;
 } = {}) {
   // Start with the greeting on every render (matches server-rendered HTML).
   // localStorage is loaded after mount in a useEffect below.
@@ -1481,14 +1491,24 @@ export default function ChatPanel({
     const projectFileSnapshot = attachedProjectFile ?? null;
     onClearAttachedProjectFile?.();
 
+    // Snapshot the memory context — selection is NOT cleared automatically on send.
+    // The user explicitly manages it (toggle off or "Clear all" in MemoryPanel).
+    // An empty array means no memory context is active.
+    const memorySnapshot =
+      memoryContext && memoryContext.length > 0 ? [...memoryContext] : null;
+
     // Capture history from current messages before the new user turn is added
     const history = buildHistory(messages);
     // Detect first user message so we can auto-title the session afterwards
     const isFirstUserMessage = !messages.some((m) => m.role === "user");
 
     // Build the text shown in the UI bubble — typed message plus small attachment label(s).
-    // File content is NOT shown in the bubble to keep it readable.
+    // File content and memory content are NOT shown in the bubble to keep it readable.
     let bubbleText = trimmed;
+    if (memorySnapshot) {
+      // Show a compact label so the user knows context was included; content never shown
+      bubbleText += `\n\n[Memory context: ${memorySnapshot.length} note${memorySnapshot.length !== 1 ? "s" : ""}]`;
+    }
     if (attachmentSnapshot) {
       bubbleText += `\n\n[Attached workspace file: ${attachmentSnapshot.path}]`;
     }
@@ -1496,8 +1516,8 @@ export default function ChatPanel({
       bubbleText += `\n\n[Attached project file: ${projectFileSnapshot.projectName}/${projectFileSnapshot.path}]`;
     }
 
-    // Build the API message — prepend file context block(s) before the user's question.
-    // Workspace attachment goes first; project file goes on top (closest to the question).
+    // Build the API message — prepend context block(s) before the user's question.
+    // Memory context goes first (outermost context), then file attachments, then the question.
     const fence = "```";
     let apiMessage = trimmed;
     if (attachmentSnapshot) {
@@ -1514,6 +1534,22 @@ export default function ChatPanel({
         `File: ${projectFileSnapshot.path}\n\n` +
         `${fence}\n${projectFileSnapshot.content}\n${fence}\n\n` +
         apiMessage;
+    }
+    if (memorySnapshot) {
+      // Build the labeled memory context block, then prepend to the message.
+      // Each note is labelled with its type so the model has useful metadata.
+      // Content is never logged — only sent to the local Ollama endpoint.
+      const memoryBlock =
+        `The user explicitly selected the following local memory notes as chat context:\n\n` +
+        memorySnapshot
+          .map((m) => `[${m.type}] ${m.title}\n${m.content}`)
+          .join("\n\n") +
+        "\n\n";
+      apiMessage = memoryBlock + apiMessage;
+      onActivity?.(
+        `Memory context injected: ${memorySnapshot.map((m) => m.title).join(", ")}`,
+        "info"
+      );
     }
 
     // Show user message immediately (bubble shows typed text + attachment label, not file content)
@@ -2067,6 +2103,30 @@ export default function ChatPanel({
             </button>
           </div>
         )}
+
+        {/* Memory context chip — shows when one or more memory notes are selected */}
+        {memoryContext && memoryContext.length > 0 && (
+          <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
+            <span className="text-purple-300 truncate">
+              Memory context:{" "}
+              <span className="font-medium">
+                {memoryContext.length} note{memoryContext.length !== 1 ? "s" : ""}
+              </span>
+              <span className="text-purple-500 ml-1">
+                · {memoryContext.map((m) => m.title).join(", ")}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={onClearMemoryContext}
+              className="flex-shrink-0 text-purple-600 hover:text-purple-300 leading-none"
+              aria-label="Clear memory context"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         <div className="flex gap-3 items-end">
           <textarea
             ref={textareaRef}

@@ -12,6 +12,17 @@ import MemoryPanel from "@/components/MemoryPanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+// Represents a memory note the user has opted-in to include in chat context.
+// A subset of the full MemoryItem shape — only the fields needed for injection.
+export interface MemoryContextItem {
+  id: string;
+  type: "preference" | "project" | "note";
+  title: string;
+  content: string;
+}
+
 // localStorage keys (mirrored from ChatPanel — do not change independently)
 const SESSION_KEY = "jarvis.session.v1";
 const CHAT_CACHE_KEY = "jarvis.chat.v1";
@@ -72,6 +83,14 @@ export default function DashboardPage() {
   // Null while loading or if the API is unreachable — ChatPanel shows "default" label.
   const [defaultOllamaModel, setDefaultOllamaModel] =
     useState<string | null>(null);
+
+  // Memory notes the user has opted-in to include in the next chat message.
+  // Lives here so both MemoryPanel (toggle buttons) and ChatPanel (injection) share it.
+  // Selection persists across view switches; never cleared automatically — only on
+  // explicit user action (toggle off, clear all, or after each send if desired).
+  const [selectedMemoryContext, setSelectedMemoryContext] = useState<
+    MemoryContextItem[]
+  >([]);
 
   // Right sidebar tab — which panel is currently shown.
   // Default "workspace" so file tools are immediately accessible.
@@ -134,6 +153,28 @@ export default function DashboardPage() {
     } catch {}
     setSelectedModelOverride(null);
     handleActivity("Ollama model override cleared — using default config", "info");
+  }
+
+  // Toggle a memory note in/out of the chat context selection.
+  // If the note is already selected, remove it; otherwise add it.
+  // Activity events log the title only — content is never logged.
+  function handleMemoryContextToggle(item: MemoryContextItem): void {
+    setSelectedMemoryContext((prev) => {
+      const exists = prev.some((m) => m.id === item.id);
+      if (exists) {
+        handleActivity(`Memory removed from context: ${item.title}`, "info");
+        return prev.filter((m) => m.id !== item.id);
+      } else {
+        handleActivity(`Memory included in context: ${item.title}`, "info");
+        return [...prev, item];
+      }
+    });
+  }
+
+  // Clear all selected memory notes from the chat context.
+  function handleMemoryContextClear(): void {
+    setSelectedMemoryContext([]);
+    handleActivity("Memory context cleared", "info");
   }
 
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
@@ -439,7 +480,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.9.0 — memory foundation
+          v0.9.1 — memory opt-in context
         </div>
       </aside>
 
@@ -463,13 +504,20 @@ export default function DashboardPage() {
                 onOpenWorkspaceFile={handleOpenWorkspaceFile}
                 modelOverride={selectedModelOverride}
                 defaultModel={defaultOllamaModel}
+                memoryContext={selectedMemoryContext}
+                onClearMemoryContext={handleMemoryContextClear}
               />
             )}
           </section>
         ) : view === "memory" ? (
           /* Memory area — manual notes and preferences, local SQLite only */
           <section className="flex-1 flex flex-col border-r border-slate-800 overflow-hidden">
-            <MemoryPanel onActivity={handleActivity} />
+            <MemoryPanel
+              onActivity={handleActivity}
+              selectedMemoryIds={new Set(selectedMemoryContext.map((m) => m.id))}
+              onToggleMemoryContext={handleMemoryContextToggle}
+              onClearMemoryContext={handleMemoryContextClear}
+            />
           </section>
         ) : (
           /* Settings area — read-only config and status view */

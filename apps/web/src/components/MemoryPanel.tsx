@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { MemoryContextItem } from "@/app/page";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -66,11 +67,27 @@ interface MemoryPanelProps {
   // Reports activity events to the parent (page.tsx) for the Activity Log.
   // Title is logged; full content is never logged.
   onActivity?: (text: string, type?: "info" | "write" | "error") => void;
+
+  // Set of memory IDs currently selected as chat context.
+  // Managed by page.tsx; passed down so toggles reflect the current state.
+  selectedMemoryIds?: Set<string>;
+
+  // Toggle a memory note in/out of the chat context selection.
+  // Called with the full MemoryContextItem so page.tsx can store content.
+  onToggleMemoryContext?: (item: MemoryContextItem) => void;
+
+  // Clear all selected memory notes from chat context.
+  onClearMemoryContext?: () => void;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function MemoryPanel({ onActivity }: MemoryPanelProps) {
+export default function MemoryPanel({
+  onActivity,
+  selectedMemoryIds = new Set(),
+  onToggleMemoryContext,
+  onClearMemoryContext,
+}: MemoryPanelProps) {
   // ── Data state ──────────────────────────────────────────────────────────────
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [loadError, setLoadError] = useState(false);
@@ -192,7 +209,7 @@ export default function MemoryPanel({ onActivity }: MemoryPanelProps) {
             <p className="text-xs text-slate-500 mt-1">
               Manual notes and preferences · local SQLite ·{" "}
               <span className="text-slate-600">
-                no automatic memory injection in v0.9.0
+                toggle notes to include in chat context
               </span>
             </p>
           </div>
@@ -207,6 +224,24 @@ export default function MemoryPanel({ onActivity }: MemoryPanelProps) {
             {formOpen ? "Cancel" : "+ Add memory"}
           </button>
         </div>
+
+        {/* Chat context selection summary — shown when one or more notes are selected */}
+        {selectedMemoryIds.size > 0 && (
+          <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
+            <span className="text-purple-300">
+              <span className="font-medium">{selectedMemoryIds.size}</span>{" "}
+              note{selectedMemoryIds.size !== 1 ? "s" : ""} included in chat context ·{" "}
+              <span className="text-purple-500">sent with your next message</span>
+            </span>
+            <button
+              onClick={onClearMemoryContext}
+              className="flex-shrink-0 text-purple-600 hover:text-purple-300 transition-colors"
+              title="Remove all from chat context"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
 
         {/* Add memory form */}
         {formOpen && (
@@ -352,7 +387,7 @@ export default function MemoryPanel({ onActivity }: MemoryPanelProps) {
                 key={item.id}
                 className="rounded-lg border border-slate-700/60 bg-slate-800/30 p-4"
               >
-                {/* Top row: type badge + title + delete */}
+                {/* Top row: type badge + title + context toggle + delete */}
                 <div className="flex items-start justify-between gap-3 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <TypeBadge type={item.type} />
@@ -360,13 +395,38 @@ export default function MemoryPanel({ onActivity }: MemoryPanelProps) {
                       {item.title}
                     </span>
                   </div>
-                  <button
-                    onClick={() => void handleDelete(item)}
-                    className="flex-shrink-0 text-xs text-slate-600 hover:text-red-400 transition-colors"
-                    title="Delete memory"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Include in chat context toggle */}
+                    <button
+                      onClick={() =>
+                        onToggleMemoryContext?.({
+                          id: item.id,
+                          type: item.type,
+                          title: item.title,
+                          content: item.content,
+                        })
+                      }
+                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                        selectedMemoryIds.has(item.id)
+                          ? "border-purple-500/50 text-purple-400 bg-purple-500/10"
+                          : "border-slate-700 text-slate-600 hover:border-purple-500/30 hover:text-purple-400"
+                      }`}
+                      title={
+                        selectedMemoryIds.has(item.id)
+                          ? "Remove from chat context"
+                          : "Include in chat context"
+                      }
+                    >
+                      {selectedMemoryIds.has(item.id) ? "✓ In context" : "Include"}
+                    </button>
+                    <button
+                      onClick={() => void handleDelete(item)}
+                      className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+                      title="Delete memory"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
 
                 {/* Content */}

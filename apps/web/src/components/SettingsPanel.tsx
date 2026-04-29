@@ -353,8 +353,11 @@ export default function SettingsPanel({
           <SettingRow label="Manual add/delete">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
+          <SettingRow label="Manual memory context (opt-in)">
+            <Badge variant="enabled" label="enabled" />
+          </SettingRow>
           <SettingRow label="Sent to Ollama or cloud">
-            <Badge variant="disabled" label="never" />
+            <Badge variant="disabled" label="Ollama only — never cloud" />
           </SettingRow>
         </Card>
 
@@ -456,11 +459,11 @@ export default function SettingsPanel({
           <SettingRow label="Memory foundation (manual, local SQLite)">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Memory opt-in chat context">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
-          <SettingRow label="Memory → chat injection (opt-in)">
-            <Badge variant="planned" />
-          </SettingRow>
           <SettingRow label="Smart Home / Home Assistant">
             <Badge variant="planned" />
           </SettingRow>
@@ -471,7 +474,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.9.0"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "0.9.1"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

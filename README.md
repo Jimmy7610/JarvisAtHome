@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.9.0)
+## What Jarvis can do right now (v0.9.1)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -53,6 +53,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Chat active model indicator (v0.8.2)** — the ChatPanel header now shows a compact pill displaying the effective Ollama model name and its source: `Ollama · qwen2.5-coder:latest · override` when a browser model override is active, or `Ollama · qwen2.5-coder:latest` when using the backend default. If the API has not yet responded the pill shows `Ollama · default model`. The pill updates immediately when the user changes or resets the model in Settings. No new backend routes — the model name is fetched once from the existing `/settings` endpoint on page load.
 - **Per-message model stamp (v0.8.3)** — each assistant message now shows which Ollama model generated it: `Jarvis · qwen2.5-coder:latest`. The actual resolved model is captured from the `{ type: "done", model }` stream event (no backend changes needed — this data was already sent). Persisted messages reload their model stamp after page refresh. Messages without a stored model (the greeting, very old history) show just `Jarvis` without a stamp. When model is switched mid-session, earlier and later messages each retain their own correct stamp.
 - **Memory foundation (v0.9.0, manual-only)** — a local Memory area is now accessible from the left sidebar. The user can manually add, view, search, and delete memory notes in three categories: Note, Preference, and Project. Memories are stored in the existing local SQLite database (no new dependency). **Memory is manual-only in v0.9.0 — no automatic injection into the Ollama system prompt, no autonomous memory writes, no cloud services.** The Settings panel shows a Memory card confirming all safety flags. Activity Log events are emitted for add/delete (title only, never full content).
+- **Memory opt-in chat context (v0.9.1)** — each memory note now has an **Include** toggle button. Selected notes are prepended to the next outgoing chat message as explicit context so the local Ollama model can use them. A purple summary banner in the Memory panel shows how many notes are active, and a matching chip appears above the ChatPanel input with a clear button. The user bubble shows `[Memory context: N notes]` for transparency. Selection persists across view switches until manually cleared — it is never cleared automatically. **Memory is injected only when the user explicitly selects notes — no automatic injection, no AI-controlled selection, content never logged.** Sent only to the local Ollama endpoint; never to cloud services.
 
 ## Prerequisites
 
