@@ -6,6 +6,7 @@ import ChatPanel from "@/components/ChatPanel";
 import ActivityPanel, { type ActivityEvent } from "@/components/ActivityPanel";
 import SessionList, { type SessionRow } from "@/components/SessionList";
 import WorkspacePanel from "@/components/WorkspacePanel";
+import ProjectLibraryPanel from "@/components/ProjectLibraryPanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -305,7 +306,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.1.0 — skeleton
+          v0.7.0 — project library
         </div>
       </aside>
 
@@ -336,9 +337,8 @@ export default function DashboardPage() {
             <ActivityPanel events={activities} />
           </div>
 
-          {/* WorkspacePanel — flex-1 min-h-0 lets it fill remaining sidebar space
-              and shrink below its natural content height so it never overflows */}
-          <div className="flex-1 min-h-0 overflow-hidden">
+          {/* WorkspacePanel — fixed height so ProjectLibraryPanel can live below it */}
+          <div className="flex-none overflow-hidden" style={{ height: "280px" }}>
             <WorkspacePanel
               onAttachFile={handleAttachFile}
               onAskAboutFile={handleAskAboutFile}
@@ -346,6 +346,11 @@ export default function DashboardPage() {
               openFileRequest={openFileRequest}
               onOpenFileRequestConsumed={() => setOpenFileRequest(null)}
             />
+          </div>
+
+          {/* ProjectLibraryPanel — flex-1 min-h-0 fills remaining sidebar space */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ProjectLibraryPanel onActivity={handleActivity} />
           </div>
         </aside>
       </main>

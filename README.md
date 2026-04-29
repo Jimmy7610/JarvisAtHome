@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.5.10)
+## What Jarvis can do right now (v0.7.0)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -42,6 +42,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Piper Windows setup checklist (v0.5.8)** — `docs/setup/piper-windows-checklist.md` is a step-by-step guide for the complete Piper installation process. It covers where to find official Piper release and voice model URLs (GitHub releases, HuggingFace rhasspy/piper-voices), how to choose a voice (clear/calm English, no fictional character imitation), how to fill in the setup script URL variables, and how to test with PowerShell and curl commands. Official URL selection remains manual — version tags change with each Piper release. The setup script placeholder error output now references this checklist directly.
 - **Piper official download URLs selected (v0.5.9)** — `scripts/setup-piper-windows.ps1` now has real verified URLs pre-filled: Piper release `2023.11.14-2` (Windows x64 zip, ~21 MB) and voice `en_GB-alan-medium` (British English male, medium quality, ~60 MB). All URLs were verified with HTTP HEAD requests. A `-DryRun` flag was added — run `powershell -ExecutionPolicy Bypass -File .\scripts\setup-piper-windows.ps1 -DryRun` to preview what will be downloaded without downloading anything. Real local Piper setup is ready for manual run. No binaries or models are bundled in the repo.
 - **Quick launcher for Jarvis + Piper dev (v0.5.10)** — `scripts/start-jarvis-with-piper.ps1` opens both the Piper TTS wrapper and the Jarvis dev stack in separate PowerShell windows with a single command: `powershell -ExecutionPolicy Bypass -File .\scripts\start-jarvis-with-piper.ps1`. Checks that Piper is installed before starting; exits with setup instructions if files are missing. Detects port 5005 conflicts and skips the Piper window gracefully. Warns if `apps/api/.env` is missing or `LOCAL_TTS_ENABLED=true` is not set. Optional `-SkipPiper` and `-SkipJarvis` flags for partial starts. Does not download, install, or modify anything.
+- **Project Library (v0.7.0)** — a read-only panel in the right sidebar that browses `workspace/projects/`. Click a project to list its text files recursively; click a file to read it. Supports `.md`, `.ts`, `.tsx`, `.js`, `.json`, `.yaml`, `.css`, `.html`, `.sh`, `.ps1`, and more. Binary files, build artifacts, and `node_modules` are excluded. Files are capped at 200 KB. No writes — the panel is a viewer only. Backend routes: `GET /projects`, `GET /projects/:name`, `GET /projects/:name/file`. All paths are sandboxed with traversal protection.
 
 ## Prerequisites
 
@@ -175,6 +176,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.4 ✓ | Email drafts — local Markdown files in `workspace/drafts/`, write-with-approval, no sending |
 | v0.5 ✓ | Voice — microphone input, text-to-speech output |
 | v0.6 | Smart Home — Home Assistant integration |
+| v0.7 ✓ | Project Library — read-only browser for workspace/projects/ |
 
 ## Keyboard shortcuts
 

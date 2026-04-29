@@ -10,6 +10,7 @@ import chatRouter from "./routes/chat";
 import sessionsRouter from "./routes/sessions";
 import filesRouter from "./routes/files";
 import ttsRouter from "./routes/tts";
+import projectsRouter from "./routes/projects";
 
 const app = express();
 
@@ -48,6 +49,10 @@ app.use("/files", filesRouter);
 // Only active when LOCAL_TTS_ENABLED=true; always returns a safe JSON error otherwise.
 // Upstream URL is locked to localhost (see config.ts).
 app.use("/tts", ttsRouter);
+
+// Project library routes — mounted at /projects
+// Read-only access to workspace/projects/; sandboxed, no writes.
+app.use("/projects", projectsRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);
