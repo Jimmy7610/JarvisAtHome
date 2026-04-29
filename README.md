@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.7.3)
+## What Jarvis can do right now (v0.7.5)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -46,6 +46,8 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Attach Project Library file to chat (v0.7.1)** — click "Attach" on any previewed project file to queue its content for the next message. An indigo attachment chip appears above the chat input showing the project and file path with a remove button. When sent, the file content is prepended to the API request in a clearly labelled fenced block; the user bubble shows only the typed message and a small label. The attachment clears automatically after send. Temporary one-message context only — no RAG, no vector DB, no long-term memory.
 - **Ask Jarvis about this project file (v0.7.2)** — click "Ask Jarvis" on any previewed project file to attach it AND prefill the chat input with `Explain this project file and suggest safe improvements.` Edit the question as desired and press Send. Reuses the same `prefillInput` mechanism as the WorkspacePanel "Ask Jarvis about this file" feature — no new ChatPanel props needed. Project Library remains read-only.
 - **Project Library search (v0.7.3)** — a search input above the project file list filters files by name or relative path as you type. Case-insensitive substring match. Shows a match count while a query is active and a "No matching files." empty state with a clear button when nothing matches. Directory header rows are hidden during search (flat results only). Clicking a search result opens the file normally — Attach and Ask Jarvis still work. Frontend-only filter over the already-loaded file list; no backend round-trip per keystroke. Search clears automatically when switching projects.
+- **Workspace Files search (v0.7.4)** — a search input above the Workspace Files listing filters the current directory entries by name or path as you type. Case-insensitive substring match on both files and folders. A running match count appears beside the input; "No matching workspace files." with a Clear link is shown when nothing matches. Folder results are still navigable. Clicking a file result opens the preview normally — Attach, Ask Jarvis, and Propose safe edit all work unchanged. Current-directory filter only (matches the existing one-directory-at-a-time navigation model). Search clears automatically on every directory navigation.
+- **Right sidebar tabs (v0.7.5)** — the four right-sidebar panels (System Status, Activity Log, Workspace Files, Project Library) are now presented as a compact tab bar instead of a crowded vertical stack. Only one panel is visible at a time, giving each the full sidebar height (~830 px at 900 px screen height vs. the previous 120–280 px). Active tab is highlighted with a cyan underline. Default tab is Workspace. No panel components were changed — only the layout in `page.tsx`.
 
 ## Prerequisites
 

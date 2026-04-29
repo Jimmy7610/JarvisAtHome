@@ -52,6 +52,12 @@ export default function DashboardPage() {
   // Activity log — newest event first, capped at 50 entries
   const [activities, setActivities] = useState<ActivityEvent[]>(INITIAL_ACTIVITIES);
 
+  // Right sidebar tab — which panel is currently shown.
+  // Default "workspace" so file tools are immediately accessible.
+  const [rightTab, setRightTab] = useState<
+    "status" | "activity" | "workspace" | "projects"
+  >("workspace");
+
   function handleActivity(
     text: string,
     type: ActivityEvent["type"] = "info"
@@ -350,7 +356,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.7.0 — project library
+          v0.7.5 — tabbed panels
         </div>
       </aside>
 
@@ -374,33 +380,64 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* Right panel */}
-        <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden">
-          <StatusPanel />
-          {/* ActivityPanel — flex flex-col so ActivityPanel's own flex-1 root fills the
-              bounded height, which lets the inner overflow-y-auto list actually scroll */}
-          <div className="flex-none flex flex-col overflow-hidden" style={{ height: "240px" }}>
-            <ActivityPanel events={activities} />
+        {/* Right panel — tabbed layout */}
+        <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden bg-[#0d1120]">
+          {/* Tab bar — four equal-width tabs; active tab gets a cyan underline */}
+          <div className="flex-shrink-0 flex">
+            {(
+              [
+                { id: "status", label: "Status" },
+                { id: "activity", label: "Activity" },
+                { id: "workspace", label: "Workspace" },
+                { id: "projects", label: "Projects" },
+              ] as const
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setRightTab(id)}
+                className={`flex-1 py-2 text-xs font-medium transition-colors border-b-2 ${
+                  rightTab === id
+                    ? "text-cyan-400 border-cyan-500 bg-cyan-500/5"
+                    : "text-slate-500 border-slate-800 hover:text-slate-300 hover:border-slate-600"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
-          {/* WorkspacePanel — fixed height so ProjectLibraryPanel can live below it */}
-          <div className="flex-none overflow-hidden" style={{ height: "280px" }}>
-            <WorkspacePanel
-              onAttachFile={handleAttachFile}
-              onAskAboutFile={handleAskAboutFile}
-              onActivity={handleActivity}
-              openFileRequest={openFileRequest}
-              onOpenFileRequestConsumed={() => setOpenFileRequest(null)}
-            />
-          </div>
-
-          {/* ProjectLibraryPanel — flex-1 min-h-0 fills remaining sidebar space */}
+          {/* Tab content — each panel fills the remaining height */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            <ProjectLibraryPanel
-              onActivity={handleActivity}
-              onAttachFile={handleAttachProjectFile}
-              onAskAboutFile={handleAskAboutProjectFile}
-            />
+            {rightTab === "status" && (
+              /* Status tab: scrollable since model list can grow long */
+              <div className="h-full overflow-y-auto">
+                <StatusPanel />
+              </div>
+            )}
+            {rightTab === "activity" && (
+              /* Activity tab: ActivityPanel owns its own flex-1 scroll internally */
+              <div className="h-full flex flex-col overflow-hidden">
+                <ActivityPanel events={activities} />
+              </div>
+            )}
+            {rightTab === "workspace" && (
+              /* Workspace tab: WorkspacePanel fills the full height */
+              <WorkspacePanel
+                onAttachFile={handleAttachFile}
+                onAskAboutFile={handleAskAboutFile}
+                onActivity={handleActivity}
+                openFileRequest={openFileRequest}
+                onOpenFileRequestConsumed={() => setOpenFileRequest(null)}
+              />
+            )}
+            {rightTab === "projects" && (
+              /* Projects tab: ProjectLibraryPanel fills the full height */
+              <ProjectLibraryPanel
+                onActivity={handleActivity}
+                onAttachFile={handleAttachProjectFile}
+                onAskAboutFile={handleAskAboutProjectFile}
+              />
+            )}
           </div>
         </aside>
       </main>

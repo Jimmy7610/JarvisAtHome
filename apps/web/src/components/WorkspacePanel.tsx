@@ -4,6 +4,7 @@
 // Files can be listed and read; no write, edit, delete, or move actions exist.
 // v0.2.3: subdirectory navigation with breadcrumb path indicator.
 // v0.2.5: manual refresh button reloads the current folder listing.
+// v0.7.4: search/filter over the current directory listing.
 
 import { useState, useEffect, useRef } from "react";
 
@@ -140,6 +141,10 @@ export default function WorkspacePanel({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
+  // Search query — filters the current directory listing by name or path.
+  // Cleared automatically when navigating to a different directory.
+  const [searchQuery, setSearchQuery] = useState("");
+
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedSize, setSelectedSize] = useState<number>(0);
   const [fileContent, setFileContent] = useState<string | null>(null);
@@ -250,6 +255,7 @@ export default function WorkspacePanel({
 
   // Navigate to a directory. Clears the file preview if the selected file
   // does not live directly inside the destination directory.
+  // Also clears search so the new directory always starts with a full listing.
   function navigateTo(dirPath: string): void {
     if (selectedPath !== null) {
       // A file belongs to a folder if it is a direct child of that folder.
@@ -260,6 +266,7 @@ export default function WorkspacePanel({
           : selectedPath.startsWith(dirPath + "/");
       if (!fileBelongs) closePreview();
     }
+    setSearchQuery("");
     setCurrentPath(dirPath);
   }
 
@@ -517,10 +524,39 @@ export default function WorkspacePanel({
         </div>
       </div>
 
+      {/* Search input — shown when there is something to search */}
+      {!listLoading && !listError && entries.length > 0 && (
+        <div className="px-3 py-1.5 border-b border-slate-800/60 flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search workspace files…"
+              className="flex-1 rounded bg-slate-800/60 border border-slate-700 px-2 py-0.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 transition-colors"
+            />
+            {/* Match count — shown only while a query is active */}
+            {searchQuery.trim() && (
+              <span className="text-xs text-slate-600 shrink-0 tabular-nums">
+                {(() => {
+                  const q = searchQuery.trim().toLowerCase();
+                  const n = entries.filter(
+                    (e) =>
+                      e.name.toLowerCase().includes(q) ||
+                      e.path.toLowerCase().includes(q)
+                  ).length;
+                  return n === 0 ? "0" : `${n}`;
+                })()}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* File / directory listing */}
       <div
         className="overflow-y-auto px-3 py-2 space-y-px"
-        style={{ maxHeight: "120px" }}
+        style={{ maxHeight: "88px" }}
       >
         {listLoading && (
           <p className="text-xs text-slate-600 px-1 py-1">Loading…</p>
@@ -535,8 +571,38 @@ export default function WorkspacePanel({
             {isAtRoot ? "No files in workspace yet." : "Empty folder."}
           </p>
         )}
-        {!listLoading &&
-          entries.map((entry) => {
+        {!listLoading && (() => {
+          const trimmedQuery = searchQuery.trim().toLowerCase();
+          const isSearching = trimmedQuery.length > 0;
+
+          // When searching, filter entries by name or path (case-insensitive).
+          // Both files and directories are included in the filter so the user
+          // can also find and navigate into a matching subdirectory.
+          const displayEntries = isSearching
+            ? entries.filter(
+                (e) =>
+                  e.name.toLowerCase().includes(trimmedQuery) ||
+                  e.path.toLowerCase().includes(trimmedQuery)
+              )
+            : entries;
+
+          if (isSearching && displayEntries.length === 0) {
+            return (
+              <div className="px-1 py-1.5 flex items-center gap-1.5">
+                <p className="text-xs text-slate-600 flex-1">
+                  No matching workspace files.
+                </p>
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="text-xs text-slate-700 hover:text-cyan-400 transition-colors shrink-0"
+                >
+                  Clear
+                </button>
+              </div>
+            );
+          }
+
+          return displayEntries.map((entry) => {
             if (entry.type === "directory") {
               return (
                 <button
@@ -572,7 +638,8 @@ export default function WorkspacePanel({
                 )}
               </button>
             );
-          })}
+          });
+        })()}
       </div>
 
       {/* File preview — shown when a file is selected */}
