@@ -125,12 +125,20 @@ interface SettingsPanelProps {
   onModelOverrideChange?: (model: string) => void;
   // Called when the user clicks Reset to default.
   onModelOverrideClear?: () => void;
+  // Total number of memory notes in SQLite — passed from page.tsx which fetches
+  // GET /memory on mount.  null = not yet loaded (shows "—").
+  memoryCount?: number | null;
+  // Number of memory notes currently selected for chat context injection.
+  // Derived from selectedMemoryContext.length in page.tsx — always up to date.
+  selectedMemoryCount?: number;
 }
 
 export default function SettingsPanel({
   modelOverride,
   onModelOverrideChange,
   onModelOverrideClear,
+  memoryCount,
+  selectedMemoryCount = 0,
 }: SettingsPanelProps = {}) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [settingsError, setSettingsError] = useState(false);
@@ -338,26 +346,53 @@ export default function SettingsPanel({
 
         {/* ── C. Memory ──────────────────────────────────────────────────── */}
         <Card title="Memory">
-          <SettingRow label="Storage">
-            <Badge variant="local" label="local SQLite" />
+          {/* Live stats — sourced from page.tsx state (GET /memory on mount) */}
+          <SettingRow label="Memory notes">
+            <span className="text-sm text-slate-300">
+              {memoryCount === null || memoryCount === undefined
+                ? "—"
+                : `${memoryCount} note${memoryCount !== 1 ? "s" : ""}`}
+            </span>
           </SettingRow>
+          <SettingRow label="Selected for chat">
+            {selectedMemoryCount > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-purple-400 font-medium">
+                  {selectedMemoryCount}
+                </span>
+                <Badge variant="enabled" label="active" />
+              </div>
+            ) : (
+              <span className="text-sm text-slate-500">0</span>
+            )}
+          </SettingRow>
+          {/* Static capability flags */}
           <SettingRow label="Memory types">
             <span className="text-xs text-slate-400">note · preference · project</span>
           </SettingRow>
-          <SettingRow label="Auto memory injection">
-            <Badge variant="disabled" label="disabled" />
+          <SettingRow label="Content storage">
+            <Badge variant="local" label="local SQLite" />
           </SettingRow>
-          <SettingRow label="Autonomous memory writing">
-            <Badge variant="disabled" label="disabled" />
+          <SettingRow label="Selection storage">
+            <span className="text-xs text-slate-400">localStorage IDs only</span>
           </SettingRow>
           <SettingRow label="Manual add/delete">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
-          <SettingRow label="Manual memory context (opt-in)">
+          <SettingRow label="Manual context (opt-in)">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
-          <SettingRow label="Sent to Ollama or cloud">
-            <Badge variant="disabled" label="Ollama only — never cloud" />
+          <SettingRow label="Persisted selection">
+            <Badge variant="enabled" label="enabled" />
+          </SettingRow>
+          <SettingRow label="Auto injection">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+          <SettingRow label="Autonomous memory writes">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+          <SettingRow label="Sent to cloud">
+            <Badge variant="disabled" label="never" />
           </SettingRow>
         </Card>
 
@@ -462,6 +497,15 @@ export default function SettingsPanel({
           <SettingRow label="Memory opt-in chat context">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Persistent memory selection (localStorage)">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Memory nav badge">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Memory stats in Settings">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
           <SettingRow label="Smart Home / Home Assistant">
@@ -474,7 +518,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.9.3"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "0.9.4"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

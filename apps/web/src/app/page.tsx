@@ -632,7 +632,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.9.3 — memory nav badge
+          v0.9.4 — memory stats in settings
         </div>
       </aside>
 
@@ -680,6 +680,8 @@ export default function DashboardPage() {
               modelOverride={selectedModelOverride}
               onModelOverrideChange={handleModelOverrideChange}
               onModelOverrideClear={handleModelOverrideClear}
+              memoryCount={memoryCount}
+              selectedMemoryCount={selectedMemoryContext.length}
             />
           </section>
         )}

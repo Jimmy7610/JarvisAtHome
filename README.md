@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.9.3)
+## What Jarvis can do right now (v0.9.4)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -56,6 +56,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Memory opt-in chat context (v0.9.1)** — each memory note now has an **Include** toggle button. Selected notes are prepended to the next outgoing chat message as explicit context so the local Ollama model can use them. A purple summary banner in the Memory panel shows how many notes are active, and a matching chip appears above the ChatPanel input with a clear button. The user bubble shows `[Memory context: N notes]` for transparency. Selection persists across view switches until manually cleared — it is never cleared automatically. **Memory is injected only when the user explicitly selects notes — no automatic injection, no AI-controlled selection, content never logged.** Sent only to the local Ollama endpoint; never to cloud services.
 - **Persistent selected memory context (v0.9.2)** — the Include selection from v0.9.1 now survives browser refresh. Selected memory note IDs are saved to `localStorage` under `jarvis:selected-memory-context-ids`. On page load, Jarvis reads the saved IDs, fetches `GET /memory`, and restores the full selected context for notes that still exist. Stale IDs from deleted notes are cleaned up automatically — either immediately when a note is deleted while selected, or on the next page load. Full memory content is never stored in `localStorage`; it stays in local SQLite only. Memory context remains entirely opt-in and user-controlled.
 - **Memory nav badge (v0.9.3)** — the Memory item in the left sidebar now shows a compact right-aligned counter: the total number of memory notes and, when any are selected for chat context, the active count (e.g. `4 · 2✓`). The total is loaded on page startup via a single `GET /memory` call (the same call that restores persisted selected IDs) and kept live by a callback from MemoryPanel after add/delete operations. No new API endpoints; no backend changes.
+- **Memory stats in Settings (v0.9.4)** — the Settings → Memory card now shows live stats alongside the existing capability flags: total memory note count and how many are currently selected for chat context. The values come directly from `page.tsx` state (no extra API call) so they are always in sync with the nav badge and the memory context chip. The selected count is highlighted purple with an "active" badge when non-zero. Feature Status was updated to reflect all completed memory milestones (v0.9.2–v0.9.4).
 
 ## Prerequisites
 
