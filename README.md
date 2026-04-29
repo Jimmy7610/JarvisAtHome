@@ -4,7 +4,7 @@ Jarvis is a local-first personal AI assistant built for Jimmy Eliasson.
 
 It runs entirely on your own machine and uses [Ollama](https://ollama.com) as the only AI provider. No data is sent to cloud AI services.
 
-## What Jarvis can do right now (v0.7.5)
+## What Jarvis can do right now (v0.8.0)
 
 - **Chat with local Ollama models** — streaming, token-by-token responses.
 - **Stop streaming** mid-response with a cancel button.
@@ -48,6 +48,7 @@ It runs entirely on your own machine and uses [Ollama](https://ollama.com) as th
 - **Project Library search (v0.7.3)** — a search input above the project file list filters files by name or relative path as you type. Case-insensitive substring match. Shows a match count while a query is active and a "No matching files." empty state with a clear button when nothing matches. Directory header rows are hidden during search (flat results only). Clicking a search result opens the file normally — Attach and Ask Jarvis still work. Frontend-only filter over the already-loaded file list; no backend round-trip per keystroke. Search clears automatically when switching projects.
 - **Workspace Files search (v0.7.4)** — a search input above the Workspace Files listing filters the current directory entries by name or path as you type. Case-insensitive substring match on both files and folders. A running match count appears beside the input; "No matching workspace files." with a Clear link is shown when nothing matches. Folder results are still navigable. Clicking a file result opens the preview normally — Attach, Ask Jarvis, and Propose safe edit all work unchanged. Current-directory filter only (matches the existing one-directory-at-a-time navigation model). Search clears automatically on every directory navigation.
 - **Right sidebar tabs (v0.7.5)** — the four right-sidebar panels (System Status, Activity Log, Workspace Files, Project Library) are now presented as a compact tab bar instead of a crowded vertical stack. Only one panel is visible at a time, giving each the full sidebar height (~830 px at 900 px screen height vs. the previous 120–280 px). Active tab is highlighted with a cyan underline. Default tab is Workspace. No panel components were changed — only the layout in `page.tsx`.
+- **Settings Panel foundation (v0.8.0, read-only)** — clicking Settings in the left sidebar now opens a dedicated Settings view instead of the chat area. The panel shows five read-only cards: Runtime (app/API version, environment), Ollama (provider, base URL, active model, connection status), Safety (file write approval, disabled email/terminal/cloud), Workspace (feature flags per capability), and Feature Status (completed and planned milestones). Data is fetched from a new `GET /settings` backend endpoint that returns only non-secret config. No editing, no `.env` writes, no secrets exposed. Clicking Dashboard or Chat returns to the normal chat view.
 
 ## Prerequisites
 
@@ -182,6 +183,7 @@ This file is local-only and gitignored. It is created automatically on first API
 | v0.5 ✓ | Voice — microphone input, text-to-speech output |
 | v0.6 | Smart Home — Home Assistant integration |
 | v0.7 ✓ | Project Library — read-only browser for workspace/projects/, attach file to chat |
+| v0.8 ✓ | Settings Panel — read-only config/status overview; Settings nav item functional |
 
 ## Keyboard shortcuts
 

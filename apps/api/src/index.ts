@@ -11,6 +11,7 @@ import sessionsRouter from "./routes/sessions";
 import filesRouter from "./routes/files";
 import ttsRouter from "./routes/tts";
 import projectsRouter from "./routes/projects";
+import settingsRouter from "./routes/settings";
 
 const app = express();
 
@@ -53,6 +54,10 @@ app.use("/tts", ttsRouter);
 // Project library routes — mounted at /projects
 // Read-only access to workspace/projects/; sandboxed, no writes.
 app.use("/projects", projectsRouter);
+
+// Settings route — mounted at /settings
+// Returns safe, read-only config/feature-flag snapshot. No secrets exposed.
+app.use("/settings", settingsRouter);
 
 app.listen(config.port, () => {
   console.log(`Jarvis API running on http://localhost:${config.port}`);

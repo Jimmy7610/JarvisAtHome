@@ -1,0 +1,382 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface SettingsData {
+  ok: boolean;
+  appVersion: string;
+  apiVersion: string;
+  environment: string;
+  ollama: {
+    baseUrl: string;
+    defaultModel: string;
+  };
+  features: {
+    fileWriteEnabled: boolean;
+    fileWriteRequiresApproval: boolean;
+    workspaceFilesEnabled: boolean;
+    projectLibraryEnabled: boolean;
+    projectLibraryReadOnly: boolean;
+    draftsEnabled: boolean;
+    emailSendEnabled: boolean;
+    terminalToolsEnabled: boolean;
+    cloudAiEnabled: boolean;
+    localTtsEnabled: boolean;
+  };
+  safety: {
+    ollamaOnly: boolean;
+    workspaceLabel: string;
+  };
+}
+
+interface OllamaStatusData {
+  ok: boolean;
+  baseUrl: string;
+  configuredDefaultModel: string;
+  resolvedDefaultModel: string | null;
+  models: { name: string; size: number; modified_at: string }[];
+  error?: string;
+}
+
+type ApiStatus = "checking" | "online" | "offline";
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+type BadgeVariant =
+  | "enabled"
+  | "disabled"
+  | "approval"
+  | "local"
+  | "readonly"
+  | "planned"
+  | "done";
+
+function Badge({ variant, label }: { variant: BadgeVariant; label?: string }) {
+  const styles: Record<BadgeVariant, string> = {
+    enabled:  "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+    disabled: "bg-slate-700/50 text-slate-500 border border-slate-700",
+    approval: "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+    local:    "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20",
+    readonly: "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20",
+    planned:  "bg-slate-700/30 text-slate-600 border border-slate-700/50",
+    done:     "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+  };
+  const defaults: Record<BadgeVariant, string> = {
+    enabled:  "enabled",
+    disabled: "disabled",
+    approval: "approval required",
+    local:    "local only",
+    readonly: "read-only",
+    planned:  "planned",
+    done:     "✓ done",
+  };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${styles[variant]}`}>
+      {label ?? defaults[variant]}
+    </span>
+  );
+}
+
+function SettingRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5 first:pt-0 last:pb-0">
+      <span className="text-sm text-slate-400 leading-snug">{label}</span>
+      <div className="flex-shrink-0 text-right">{children}</div>
+    </div>
+  );
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-700/60 bg-slate-800/30 p-4">
+      <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-3">
+        {title}
+      </h3>
+      <div className="space-y-0 divide-y divide-slate-700/40">{children}</div>
+    </div>
+  );
+}
+
+function MonoValue({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-xs font-mono text-cyan-400 bg-slate-800 border border-slate-700 px-1.5 py-0.5 rounded">
+      {children}
+    </span>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export default function SettingsPanel() {
+  const [settings, setSettings] = useState<SettingsData | null>(null);
+  const [settingsError, setSettingsError] = useState(false);
+  const [ollamaData, setOllamaData] = useState<OllamaStatusData | null>(null);
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Fetch /settings, /health, and /ollama/status in parallel
+    const p1 = fetch(`${API_URL}/settings`)
+      .then((r) => r.json())
+      .then((d: SettingsData) => {
+        if (d.ok) setSettings(d);
+        else setSettingsError(true);
+      })
+      .catch(() => setSettingsError(true));
+
+    const p2 = fetch(`${API_URL}/health`)
+      .then((r) => r.json())
+      .then((d: { ok: boolean }) => setApiStatus(d.ok ? "online" : "offline"))
+      .catch(() => setApiStatus("offline"));
+
+    const p3 = fetch(`${API_URL}/ollama/status`)
+      .then((r) => r.json())
+      .then((d: OllamaStatusData) => setOllamaData(d))
+      .catch(() => {});
+
+    void Promise.all([p1, p2, p3]).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-sm text-slate-500 animate-pulse">
+          Loading settings…
+        </p>
+      </div>
+    );
+  }
+
+  if (settingsError && !settings) {
+    return (
+      <div className="flex-1 flex items-center justify-center px-8 text-center">
+        <p className="text-sm text-red-400/80">
+          Could not load settings — is the Jarvis API running at{" "}
+          <span className="font-mono text-xs">{API_URL}</span>?
+        </p>
+      </div>
+    );
+  }
+
+  const feat = settings?.features;
+  const ollamaConnected = ollamaData?.ok ?? false;
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-2xl mx-auto px-6 py-6 space-y-5">
+
+        {/* Page header */}
+        <div className="border-b border-slate-800 pb-4">
+          <h2 className="text-lg font-semibold text-slate-100 tracking-tight">
+            Settings
+          </h2>
+          <p className="text-xs text-amber-400/80 mt-1">
+            Settings are read-only in v0.8.0. Editing will be added in a later
+            version.
+          </p>
+        </div>
+
+        {/* ── A. Runtime ─────────────────────────────────────────────────── */}
+        <Card title="Runtime">
+          <SettingRow label="App version">
+            <MonoValue>v{settings?.appVersion ?? "—"}</MonoValue>
+          </SettingRow>
+          <SettingRow label="API version">
+            <div className="flex items-center gap-2">
+              <MonoValue>v{settings?.apiVersion ?? "—"}</MonoValue>
+              <Badge
+                variant={
+                  apiStatus === "online"
+                    ? "enabled"
+                    : apiStatus === "checking"
+                    ? "approval"
+                    : "disabled"
+                }
+                label={apiStatus}
+              />
+            </div>
+          </SettingRow>
+          <SettingRow label="Frontend">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Next.js 14</span>
+              <Badge variant="enabled" label="online" />
+            </div>
+          </SettingRow>
+          <SettingRow label="Environment">
+            <Badge variant="local" label={settings?.environment ?? "local"} />
+          </SettingRow>
+        </Card>
+
+        {/* ── B. Ollama ──────────────────────────────────────────────────── */}
+        <Card title="Ollama — AI Provider">
+          <SettingRow label="Provider">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-300">Ollama</span>
+              <Badge variant="local" label="only AI provider" />
+            </div>
+          </SettingRow>
+          <SettingRow label="Base URL">
+            <MonoValue>{settings?.ollama.baseUrl ?? "—"}</MonoValue>
+          </SettingRow>
+          <SettingRow label="Configured model">
+            <MonoValue>{settings?.ollama.defaultModel ?? "—"}</MonoValue>
+          </SettingRow>
+          <SettingRow label="Active model">
+            {ollamaData?.ok && ollamaData.resolvedDefaultModel ? (
+              <MonoValue>{ollamaData.resolvedDefaultModel}</MonoValue>
+            ) : (
+              <span className="text-xs text-slate-500">
+                {ollamaConnected ? "—" : "not connected"}
+              </span>
+            )}
+          </SettingRow>
+          <SettingRow label="Models available">
+            <span className="text-sm text-slate-300">
+              {ollamaData?.ok
+                ? `${ollamaData.models.length} model${ollamaData.models.length !== 1 ? "s" : ""}`
+                : "—"}
+            </span>
+          </SettingRow>
+          <SettingRow label="Connection">
+            <Badge
+              variant={
+                !ollamaData
+                  ? "approval"
+                  : ollamaData.ok
+                  ? "enabled"
+                  : "disabled"
+              }
+              label={
+                !ollamaData ? "checking" : ollamaData.ok ? "connected" : "disconnected"
+              }
+            />
+          </SettingRow>
+          <SettingRow label="Cloud AI providers">
+            <Badge variant="disabled" label="none — local only" />
+          </SettingRow>
+        </Card>
+
+        {/* ── C. Safety ──────────────────────────────────────────────────── */}
+        <Card title="Safety">
+          <SettingRow label="File write">
+            <Badge variant="approval" />
+          </SettingRow>
+          <SettingRow label="Workspace writes">
+            <Badge variant="approval" label="approval required" />
+          </SettingRow>
+          <SettingRow label="Project Library">
+            <Badge variant="readonly" />
+          </SettingRow>
+          <SettingRow label="Email sending">
+            <Badge variant="disabled" />
+          </SettingRow>
+          <SettingRow label="Terminal tools">
+            <Badge variant="disabled" />
+          </SettingRow>
+          <SettingRow label="Cloud AI providers">
+            <Badge variant="disabled" />
+          </SettingRow>
+          <SettingRow label="AI provider scope">
+            <Badge variant="local" label="Ollama only" />
+          </SettingRow>
+        </Card>
+
+        {/* ── D. Workspace ───────────────────────────────────────────────── */}
+        <Card title="Workspace">
+          <SettingRow label="Workspace root">
+            <MonoValue>{settings?.safety.workspaceLabel ?? "workspace/"}</MonoValue>
+          </SettingRow>
+          <SettingRow label="Workspace Files">
+            <Badge
+              variant={feat?.workspaceFilesEnabled ? "enabled" : "disabled"}
+            />
+          </SettingRow>
+          <SettingRow label="Project Library">
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={feat?.projectLibraryEnabled ? "enabled" : "disabled"}
+              />
+              {feat?.projectLibraryReadOnly && (
+                <Badge variant="readonly" />
+              )}
+            </div>
+          </SettingRow>
+          <SettingRow label="Drafts folder">
+            <Badge variant={feat?.draftsEnabled ? "enabled" : "disabled"} />
+          </SettingRow>
+          <SettingRow label="Local TTS">
+            <Badge
+              variant={feat?.localTtsEnabled ? "enabled" : "disabled"}
+              label={feat?.localTtsEnabled ? "enabled" : "disabled"}
+            />
+          </SettingRow>
+          <SettingRow label="Path traversal protection">
+            <Badge variant="enabled" label="active" />
+          </SettingRow>
+        </Card>
+
+        {/* ── E. Feature status ──────────────────────────────────────────── */}
+        <Card title="Feature Status">
+          {/* Completed */}
+          <SettingRow label="Chat (streaming)">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Multiple chat sessions">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Persistent chat history (SQLite)">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Workspace Files browser">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Write-with-approval flow">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Project Library">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Local email drafts">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Voice / TTS controls">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Right sidebar tabs">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Settings panel (read-only)">
+            <Badge variant="done" />
+          </SettingRow>
+
+          {/* Planned */}
+          <SettingRow label="Memory (local notes, past context)">
+            <Badge variant="planned" />
+          </SettingRow>
+          <SettingRow label="Smart Home / Home Assistant">
+            <Badge variant="planned" />
+          </SettingRow>
+          <SettingRow label="Settings editing">
+            <Badge variant="planned" />
+          </SettingRow>
+        </Card>
+
+        {/* Footer note */}
+        <p className="text-xs text-slate-600 text-center pb-2">
+          Jarvis v{settings?.appVersion ?? "0.8.0"} — local-first AI assistant ·
+          No data sent to cloud services
+        </p>
+      </div>
+    </div>
+  );
+}

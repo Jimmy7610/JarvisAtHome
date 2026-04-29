@@ -7,6 +7,7 @@ import ActivityPanel, { type ActivityEvent } from "@/components/ActivityPanel";
 import SessionList, { type SessionRow } from "@/components/SessionList";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import ProjectLibraryPanel from "@/components/ProjectLibraryPanel";
+import SettingsPanel from "@/components/SettingsPanel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -51,6 +52,10 @@ export default function DashboardPage() {
 
   // Activity log — newest event first, capped at 50 entries
   const [activities, setActivities] = useState<ActivityEvent[]>(INITIAL_ACTIVITIES);
+
+  // Main view — "chat" shows the ChatPanel; "settings" shows the SettingsPanel.
+  // Right sidebar is always visible regardless of which view is active.
+  const [view, setView] = useState<"chat" | "settings">("chat");
 
   // Right sidebar tab — which panel is currently shown.
   // Default "workspace" so file tools are immediately accessible.
@@ -337,11 +342,24 @@ export default function DashboardPage() {
 
         {/* Navigation */}
         <nav className="px-3 py-4 space-y-1 border-b border-slate-800">
-          <NavItem label="Dashboard" active />
-          <NavItem label="Chat" />
+          {/* Dashboard and Chat both return to the main chat view */}
+          <NavItem
+            label="Dashboard"
+            active={view === "chat"}
+            onClick={() => setView("chat")}
+          />
+          <NavItem
+            label="Chat"
+            onClick={() => setView("chat")}
+          />
           <NavItem label="Memory" disabled />
           <NavItem label="Files" disabled />
-          <NavItem label="Settings" disabled />
+          {/* Settings is now functional — switches center area to SettingsPanel */}
+          <NavItem
+            label="Settings"
+            active={view === "settings"}
+            onClick={() => setView("settings")}
+          />
         </nav>
 
         {/* Session list — flex-1 so it fills remaining sidebar space */}
@@ -356,29 +374,37 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.7.5 — tabbed panels
+          v0.8.0 — settings panel
         </div>
       </aside>
 
       {/* Main content */}
       <main className="flex-1 flex overflow-hidden">
-        {/* Chat area — ChatPanel remounts when activeSessionId changes (key prop) */}
-        <section className="flex-1 flex flex-col border-r border-slate-800">
-          {sessionReady && (
-            <ChatPanel
-              key={activeSessionId ?? "new"}
-              onSessionUpdated={() => void fetchSessions()}
-              attachment={attachment}
-              onClearAttachment={handleClearAttachment}
-              attachedProjectFile={attachedProjectFile}
-              onClearAttachedProjectFile={handleClearAttachedProjectFile}
-              prefillInput={prefillInput}
-              onConsumePrefill={handleConsumePrefill}
-              onActivity={handleActivity}
-              onOpenWorkspaceFile={handleOpenWorkspaceFile}
-            />
-          )}
-        </section>
+        {/* Center area — switches between Chat and Settings */}
+        {view === "chat" ? (
+          /* Chat area — ChatPanel remounts when activeSessionId changes (key prop) */
+          <section className="flex-1 flex flex-col border-r border-slate-800">
+            {sessionReady && (
+              <ChatPanel
+                key={activeSessionId ?? "new"}
+                onSessionUpdated={() => void fetchSessions()}
+                attachment={attachment}
+                onClearAttachment={handleClearAttachment}
+                attachedProjectFile={attachedProjectFile}
+                onClearAttachedProjectFile={handleClearAttachedProjectFile}
+                prefillInput={prefillInput}
+                onConsumePrefill={handleConsumePrefill}
+                onActivity={handleActivity}
+                onOpenWorkspaceFile={handleOpenWorkspaceFile}
+              />
+            )}
+          </section>
+        ) : (
+          /* Settings area — read-only config and status view */
+          <section className="flex-1 flex flex-col border-r border-slate-800 overflow-hidden">
+            <SettingsPanel />
+          </section>
+        )}
 
         {/* Right panel — tabbed layout */}
         <aside className="w-72 flex-shrink-0 flex flex-col overflow-hidden bg-[#0d1120]">
@@ -445,15 +471,18 @@ export default function DashboardPage() {
   );
 }
 
-// Simple navigation item — no router dependency needed at this stage
+// Simple navigation item — no router dependency needed at this stage.
+// onClick is optional so disabled items and items without a handler are safe.
 function NavItem({
   label,
   active,
   disabled,
+  onClick,
 }: {
   label: string;
   active?: boolean;
   disabled?: boolean;
+  onClick?: () => void;
 }) {
   const base = "w-full text-left px-3 py-2 rounded text-sm transition-colors";
   const styles = disabled
@@ -463,7 +492,7 @@ function NavItem({
     : `${base} text-slate-400 hover:bg-slate-800 hover:text-slate-200`;
 
   return (
-    <button className={styles} disabled={disabled}>
+    <button className={styles} disabled={disabled} onClick={onClick}>
       {label}
     </button>
   );
