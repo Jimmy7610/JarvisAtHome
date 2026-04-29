@@ -209,7 +209,45 @@ export default function SettingsPanel({
           </p>
         </div>
 
-        {/* ── A. Runtime ─────────────────────────────────────────────────── */}
+        {/* ── A. About Jarvis ────────────────────────────────────────────── */}
+        <Card title="About Jarvis">
+          {/* Identity row */}
+          <div className="flex items-center gap-2 py-1.5">
+            <span className="text-sm font-semibold text-slate-200">Jarvis</span>
+            <MonoValue>v{settings?.appVersion ?? "1.0.0"}</MonoValue>
+            <Badge variant="done" label="stable" />
+          </div>
+          {/* One-line summary */}
+          <div className="py-1.5">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Local-first personal AI assistant powered by Ollama.
+              All AI processing runs on your machine — no data sent to cloud services.
+            </p>
+          </div>
+          <SettingRow label="AI provider">
+            <Badge variant="local" label="Ollama only" />
+          </SettingRow>
+          <SettingRow label="Cloud AI">
+            <Badge variant="disabled" label="never" />
+          </SettingRow>
+          <SettingRow label="File writes">
+            <Badge variant="approval" label="approval required" />
+          </SettingRow>
+          <SettingRow label="Memory injection">
+            <Badge variant="enabled" label="opt-in only" />
+          </SettingRow>
+          <SettingRow label="Project Library">
+            <Badge variant="readonly" label="read-only" />
+          </SettingRow>
+          <SettingRow label="Autonomous writes">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+          <SettingRow label="Email sending">
+            <Badge variant="disabled" label="disabled" />
+          </SettingRow>
+        </Card>
+
+        {/* ── B. Runtime ─────────────────────────────────────────────────── */}
         <Card title="Runtime">
           <SettingRow label="App version">
             <MonoValue>v{settings?.appVersion ?? "—"}</MonoValue>
@@ -240,7 +278,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── B. Ollama ──────────────────────────────────────────────────── */}
+        {/* ── C. Ollama ──────────────────────────────────────────────────── */}
         <Card title="Ollama — AI Provider">
           <SettingRow label="Provider">
             <div className="flex items-center gap-2">
@@ -344,7 +382,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── C. Memory ──────────────────────────────────────────────────── */}
+        {/* ── D. Memory ──────────────────────────────────────────────────── */}
         <Card title="Memory">
           {/* Live stats — sourced from page.tsx state (GET /memory on mount) */}
           <SettingRow label="Memory notes">
@@ -354,7 +392,7 @@ export default function SettingsPanel({
                 : `${memoryCount} note${memoryCount !== 1 ? "s" : ""}`}
             </span>
           </SettingRow>
-          <SettingRow label="Selected for chat">
+          <SettingRow label="Selected for this chat">
             {selectedMemoryCount > 0 ? (
               <div className="flex items-center gap-1.5">
                 <span className="text-sm text-purple-400 font-medium">
@@ -396,7 +434,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── D. Safety ──────────────────────────────────────────────────── */}
+        {/* ── E. Safety ──────────────────────────────────────────────────── */}
         <Card title="Safety">
           <SettingRow label="File write">
             <Badge variant="approval" />
@@ -421,7 +459,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── E. Workspace ───────────────────────────────────────────────── */}
+        {/* ── F. Workspace ───────────────────────────────────────────────── */}
         <Card title="Workspace">
           <SettingRow label="Workspace root">
             <MonoValue>{settings?.safety.workspaceLabel ?? "workspace/"}</MonoValue>
@@ -455,7 +493,7 @@ export default function SettingsPanel({
           </SettingRow>
         </Card>
 
-        {/* ── F. Feature status ──────────────────────────────────────────── */}
+        {/* ── G. Feature status ──────────────────────────────────────────── */}
         <Card title="Feature Status">
           {/* Completed */}
           <SettingRow label="Chat (streaming)">
@@ -506,6 +544,12 @@ export default function SettingsPanel({
           <SettingRow label="Memory stats in Settings">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Chat active model indicator">
+            <Badge variant="done" />
+          </SettingRow>
+          <SettingRow label="Per-message model stamp">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
           <SettingRow label="Smart Home / Home Assistant">
@@ -514,11 +558,23 @@ export default function SettingsPanel({
           <SettingRow label="Settings editing (full)">
             <Badge variant="planned" />
           </SettingRow>
+          <SettingRow label="Full voice assistant">
+            <Badge variant="planned" />
+          </SettingRow>
+          <SettingRow label="Real email integration">
+            <Badge variant="planned" />
+          </SettingRow>
+          <SettingRow label="Multi-file proposals">
+            <Badge variant="planned" />
+          </SettingRow>
+          <SettingRow label="Agent workflows">
+            <Badge variant="planned" />
+          </SettingRow>
         </Card>
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "0.9.4"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "1.0.0"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

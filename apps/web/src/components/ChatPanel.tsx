@@ -2104,7 +2104,7 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* Memory context chip — shows when one or more memory notes are selected */}
+        {/* Memory context chip — shows when one or more memory notes are selected for this chat */}
         {memoryContext && memoryContext.length > 0 && (
           <div className="flex items-center justify-between gap-2 mb-2 px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
             <span className="text-purple-300 truncate">
@@ -2115,12 +2115,13 @@ export default function ChatPanel({
               <span className="text-purple-500 ml-1">
                 · {memoryContext.map((m) => m.title).join(", ")}
               </span>
+              <span className="text-purple-700 ml-1">· this chat only</span>
             </span>
             <button
               type="button"
               onClick={onClearMemoryContext}
               className="flex-shrink-0 text-purple-600 hover:text-purple-300 leading-none"
-              aria-label="Clear memory context"
+              aria-label="Clear memory context for this chat"
             >
               ×
             </button>

@@ -255,13 +255,13 @@ export default function MemoryPanel({
           <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
             <span className="text-purple-300">
               <span className="font-medium">{selectedMemoryIds.size}</span>{" "}
-              note{selectedMemoryIds.size !== 1 ? "s" : ""} included in chat context ·{" "}
-              <span className="text-purple-500">sent with your next message</span>
+              note{selectedMemoryIds.size !== 1 ? "s" : ""} included in this chat ·{" "}
+              <span className="text-purple-500">this chat only</span>
             </span>
             <button
               onClick={onClearMemoryContext}
               className="flex-shrink-0 text-purple-600 hover:text-purple-300 transition-colors"
-              title="Remove all from chat context"
+              title="Remove all from this chat's context"
             >
               Clear all
             </button>
@@ -421,7 +421,7 @@ export default function MemoryPanel({
                     </span>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Include in chat context toggle */}
+                    {/* Include in this chat's context toggle */}
                     <button
                       onClick={() =>
                         onToggleMemoryContext?.({
@@ -438,11 +438,11 @@ export default function MemoryPanel({
                       }`}
                       title={
                         selectedMemoryIds.has(item.id)
-                          ? "Remove from chat context"
-                          : "Include in chat context"
+                          ? "Remove from this chat"
+                          : "Include in this chat"
                       }
                     >
-                      {selectedMemoryIds.has(item.id) ? "✓ In context" : "Include"}
+                      {selectedMemoryIds.has(item.id) ? "✓ In this chat" : "In this chat"}
                     </button>
                     <button
                       onClick={() => void handleDelete(item)}

@@ -28,41 +28,110 @@ const SESSION_KEY = "jarvis.session.v1";
 const CHAT_CACHE_KEY = "jarvis.chat.v1";
 // localStorage key for the user's Ollama model override (set via Settings panel)
 const OLLAMA_MODEL_KEY = "jarvis:selected-ollama-model";
-// localStorage key for persisted selected memory context IDs.
-// Only UUIDs are stored — full memory content stays in SQLite only.
-const MEMORY_CONTEXT_IDS_KEY = "jarvis:selected-memory-context-ids";
+// localStorage key for the per-session memory context ID map.
+// Shape: { "<sessionId>": ["uuid1", "uuid2", ...] }
+// Only UUIDs are stored — full memory content always stays in SQLite only.
+// Each chat session has its own independent memory selection.
+const MEMORY_CONTEXT_BY_SESSION_KEY = "jarvis:memory-context-by-session";
 
-// ── localStorage helpers for selected memory context IDs ─────────────────────
+// ── localStorage helpers for per-session memory context IDs ──────────────────
 //
-// Only IDs are persisted — never content.
-// On restore, page.tsx fetches GET /memory and cross-references by ID.
+// Memory context is scoped per chat session.  Switching chats restores that
+// chat's own selection; a new chat starts with an empty selection.
+// Only UUIDs are persisted — never titles, content, or any memory body text.
+// On restore, page.tsx fetches GET /memory and cross-references by ID so that
+// stale IDs (deleted notes) are automatically cleaned up.
 
-function readStoredMemoryContextIds(): string[] {
+// Read the full session → IDs map from localStorage.
+function readMemoryContextMap(): Record<string, string[]> {
   try {
-    const raw = localStorage.getItem(MEMORY_CONTEXT_IDS_KEY);
-    if (!raw) return [];
+    const raw = localStorage.getItem(MEMORY_CONTEXT_BY_SESSION_KEY);
+    if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    // Accept only string entries to guard against corrupted data
-    return (parsed as unknown[]).filter(
-      (v): v is string => typeof v === "string"
-    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return {};
+    const result: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(
+      parsed as Record<string, unknown>
+    )) {
+      if (Array.isArray(v)) {
+        // Accept only string entries — guard against corrupted data
+        result[k] = (v as unknown[]).filter(
+          (x): x is string => typeof x === "string"
+        );
+      }
+    }
+    return result;
   } catch {
-    return [];
+    return {};
   }
 }
 
-function writeStoredMemoryContextIds(ids: string[]): void {
+// Write the full map back to localStorage.
+function writeMemoryContextMap(map: Record<string, string[]>): void {
   try {
-    localStorage.setItem(MEMORY_CONTEXT_IDS_KEY, JSON.stringify(ids));
+    localStorage.setItem(
+      MEMORY_CONTEXT_BY_SESSION_KEY,
+      JSON.stringify(map)
+    );
   } catch {
     // Storage quota exceeded or unavailable — not fatal
   }
 }
 
-function clearStoredMemoryContextIds(): void {
+// Return the saved memory IDs for one session (empty array if none).
+function readMemoryContextIdsForSession(sessionId: number): string[] {
+  return readMemoryContextMap()[String(sessionId)] ?? [];
+}
+
+// Persist the memory IDs for one session.
+// Passing an empty array removes that session's entry from the map.
+function writeMemoryContextIdsForSession(
+  sessionId: number,
+  ids: string[]
+): void {
+  const map = readMemoryContextMap();
+  if (ids.length === 0) {
+    delete map[String(sessionId)];
+  } else {
+    map[String(sessionId)] = ids;
+  }
+  writeMemoryContextMap(map);
+}
+
+// Clear the saved memory context for one session.
+function clearMemoryContextForSession(sessionId: number): void {
+  writeMemoryContextIdsForSession(sessionId, []);
+}
+
+// Remove a specific memory ID from every session's saved selection.
+// Called when a memory note is deleted so no session retains a stale reference.
+function removeMemoryIdFromAllSessions(memoryId: string): void {
+  const map = readMemoryContextMap();
+  let changed = false;
+  for (const sessionId of Object.keys(map)) {
+    const before = map[sessionId];
+    const after = before.filter((id) => id !== memoryId);
+    if (after.length !== before.length) {
+      changed = true;
+      if (after.length === 0) {
+        delete map[sessionId];
+      } else {
+        map[sessionId] = after;
+      }
+    }
+  }
+  if (changed) writeMemoryContextMap(map);
+}
+
+// One-time migration: remove the old v0.9.2–v0.9.4 global key.
+// That key stored a single flat array shared across all sessions, which caused
+// memory context to bleed between chats.  v1.0.0+ uses the per-session map
+// above.  We do NOT migrate the old IDs to any session because applying an
+// unknown global selection to a specific chat would confuse the user.
+function removeOldGlobalMemoryContextKey(): void {
   try {
-    localStorage.removeItem(MEMORY_CONTEXT_IDS_KEY);
+    localStorage.removeItem("jarvis:selected-memory-context-ids");
   } catch {}
 }
 
@@ -162,21 +231,39 @@ export default function DashboardPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // On mount: fetch GET /memory once to (a) set the Memory nav badge count and
-  // (b) restore any persisted selected memory context from localStorage.
-  //
-  // This is a single fetch that serves both purposes — no double-request.
-  //
-  // Count: always set from the response so the sidebar badge is populated
-  // immediately on page load even if the user never visits the Memory view.
-  //
-  // Selected context restore: only runs when there are saved IDs in localStorage.
-  // Stale IDs (deleted memories) are silently cleaned up.
-  // This is a silent restore — no Activity Log event is emitted.
-  // If the API is unreachable, count stays null and selection stays empty;
-  // saved IDs are preserved for the next page load.
+  // One-time startup migration: remove the old global memory context key.
+  // v0.9.2–v0.9.4 stored a single flat array shared across all sessions which
+  // caused memory context to bleed between chats.  v1.0.0+ uses a per-session
+  // map — the old key is never read and should be removed on first load.
   useEffect(() => {
-    const savedIds = readStoredMemoryContextIds();
+    removeOldGlobalMemoryContextKey();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restore the saved memory context for the active session and refresh the
+  // memory nav badge count whenever the active session changes.
+  //
+  // This effect runs:
+  //   • On initial page load — when activeSessionId first becomes non-null
+  //     (either read from localStorage or after a new session is created).
+  //   • On every session switch — so each chat restores its own selection.
+  //   • On new chat creation — new session has no saved IDs → empty selection.
+  //
+  // The session switch handlers (handleSwitchSession, handleNewChat,
+  // handleDeleteSession) clear selectedMemoryContext synchronously before
+  // setting the new activeSessionId, so the UI shows an empty state
+  // immediately while this async fetch runs in the background.
+  //
+  // Stale IDs (notes deleted while a session was inactive) are silently
+  // cleaned up — the cleaned list is written back to localStorage.
+  // No Activity Log event is emitted for silent restores.
+  useEffect(() => {
+    // Not ready yet — wait for the session effect to resolve the session id
+    if (activeSessionId === null) return;
+
+    const savedIds = readMemoryContextIdsForSession(activeSessionId);
+    // Capture session id so the async callback still refers to the right session
+    // even if the user switches again before the fetch resolves.
+    const currentSessionId = activeSessionId;
 
     fetch(`${API_URL}/memory`)
       .then((r) => r.json())
@@ -192,10 +279,10 @@ export default function DashboardPage() {
         }) => {
           if (!d.ok || !Array.isArray(d.memories)) return;
 
-          // Always set the count for the nav badge
+          // Always update the count for the nav badge
           setMemoryCount(d.memories.length);
 
-          // Restore selected context only if there are saved IDs
+          // Nothing to restore if no IDs are saved for this session
           if (savedIds.length === 0) return;
 
           const savedIdSet = new Set(savedIds);
@@ -209,25 +296,22 @@ export default function DashboardPage() {
               content: m.content,
             }));
 
-          if (restored.length > 0) {
-            setSelectedMemoryContext(restored);
-          }
+          setSelectedMemoryContext(restored);
 
-          // Clean up stale IDs (deleted memories no longer in the database)
+          // Write back the cleaned list if any IDs were stale
           if (restored.length !== savedIds.length) {
-            if (restored.length === 0) {
-              clearStoredMemoryContextIds();
-            } else {
-              writeStoredMemoryContextIds(restored.map((m) => m.id));
-            }
+            writeMemoryContextIdsForSession(
+              currentSessionId,
+              restored.map((m) => m.id)
+            );
           }
         }
       )
       .catch(() => {
-        // API unreachable on mount — count stays null, selection stays empty.
-        // Saved IDs remain in localStorage for the next page load attempt.
+        // API unreachable — count stays as-is, selection stays cleared.
+        // Saved IDs remain in localStorage for the next load attempt.
       });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch the backend-configured default Ollama model name once on mount.
   // Used purely for display in the ChatPanel header pill — no functional impact.
@@ -263,37 +347,39 @@ export default function DashboardPage() {
     handleActivity("Ollama model override cleared — using default config", "info");
   }
 
-  // Toggle a memory note in/out of the chat context selection.
-  // If the note is already selected, remove it; otherwise add it.
-  // Persists the new set of IDs to localStorage (content never stored there).
+  // Toggle a memory note in/out of the current chat's context selection.
+  // Persists the updated ID list under the active session id — content is never stored.
   // Activity events log the title only — content is never logged.
   function handleMemoryContextToggle(item: MemoryContextItem): void {
+    // Safety guard — should never be null while the user is interacting
+    if (activeSessionId === null) return;
+    // Capture session id before the async state update so the localStorage
+    // write targets the correct session even if the component re-renders.
+    const sessionId = activeSessionId;
     setSelectedMemoryContext((prev) => {
       const exists = prev.some((m) => m.id === item.id);
       if (exists) {
         handleActivity(`Memory removed from context: ${item.title}`, "info");
         const next = prev.filter((m) => m.id !== item.id);
-        // Persist updated IDs — remove the key when selection becomes empty
-        if (next.length === 0) {
-          clearStoredMemoryContextIds();
-        } else {
-          writeStoredMemoryContextIds(next.map((m) => m.id));
-        }
+        // Persist updated IDs for this session only
+        writeMemoryContextIdsForSession(sessionId, next.map((m) => m.id));
         return next;
       } else {
         handleActivity(`Memory included in context: ${item.title}`, "info");
         const next = [...prev, item];
-        writeStoredMemoryContextIds(next.map((m) => m.id));
+        writeMemoryContextIdsForSession(sessionId, next.map((m) => m.id));
         return next;
       }
     });
   }
 
-  // Clear all selected memory notes from the chat context.
-  // Also removes the persisted IDs from localStorage.
+  // Clear all selected memory notes from the current chat's context.
+  // Removes this session's entry from the per-session localStorage map.
   function handleMemoryContextClear(): void {
+    if (activeSessionId !== null) {
+      clearMemoryContextForSession(activeSessionId);
+    }
     setSelectedMemoryContext([]);
-    clearStoredMemoryContextIds();
     handleActivity("Memory context cleared", "info");
   }
 
@@ -304,22 +390,15 @@ export default function DashboardPage() {
   }
 
   // Called by MemoryPanel after a memory note is successfully deleted.
-  // If the deleted note was in the selected context, removes it from state
-  // and updates localStorage immediately — no stale IDs left after delete.
+  // Removes the deleted ID from every session's saved selection in localStorage
+  // so no chat can retain a stale reference to a note that no longer exists.
+  // Also removes it from the current in-memory selection if it was active.
   // No Activity Log event here (MemoryPanel already logs the delete).
   function handleMemoryDeleted(id: string): void {
-    setSelectedMemoryContext((prev) => {
-      const next = prev.filter((m) => m.id !== id);
-      // Only touch localStorage if the deleted note was actually selected
-      if (next.length !== prev.length) {
-        if (next.length === 0) {
-          clearStoredMemoryContextIds();
-        } else {
-          writeStoredMemoryContextIds(next.map((m) => m.id));
-        }
-      }
-      return next;
-    });
+    // Clean the deleted ID from all session entries in the localStorage map
+    removeMemoryIdFromAllSessions(id);
+    // Remove from current in-memory selection if it was selected in this chat
+    setSelectedMemoryContext((prev) => prev.filter((m) => m.id !== id));
   }
 
   // File attachment — set by WorkspacePanel, consumed and cleared by ChatPanel
@@ -494,9 +573,13 @@ export default function DashboardPage() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Switch to an existing session
+  // Switch to an existing session.
+  // Memory context is cleared immediately so the old chat's selection does not
+  // briefly appear for the new chat.  The activeSessionId effect then restores
+  // the new session's own selection after fetching GET /memory.
   function handleSwitchSession(id: number): void {
     writeStoredSessionId(id);
+    setSelectedMemoryContext([]); // clear immediately — effect restores new session's context
     setActiveSessionId(id);
     // ChatPanel remounts via the key prop — it loads the new session's history automatically
   }
@@ -521,11 +604,18 @@ export default function DashboardPage() {
       return;
     }
 
+    // Clean up the deleted session's memory context from localStorage.
+    // Do this for any deleted session (not just the active one) so the map
+    // does not accumulate entries for sessions that no longer exist.
+    clearMemoryContextForSession(id);
+
     // If the deleted session was active, create a fresh replacement session
     if (id === activeSessionId) {
       try {
         localStorage.removeItem(CHAT_CACHE_KEY);
       } catch {}
+      // Clear memory context immediately — the new session starts fresh
+      setSelectedMemoryContext([]);
       const newId = await createNewSession();
       // setActiveSessionId with null is safe — ChatPanel renders null key which shows greeting
       setActiveSessionId(newId);
@@ -561,7 +651,10 @@ export default function DashboardPage() {
     void fetchSessions();
   }
 
-  // Create a new blank session and switch to it
+  // Create a new blank session and switch to it.
+  // Memory context is cleared immediately — new chats always start with no
+  // selection.  The activeSessionId effect confirms this (new session has no
+  // saved IDs in the per-session map).
   async function handleNewChat(): Promise<void> {
     const id = await createNewSession();
     if (id === null) return;
@@ -569,6 +662,7 @@ export default function DashboardPage() {
     try {
       localStorage.removeItem(CHAT_CACHE_KEY);
     } catch {}
+    setSelectedMemoryContext([]); // new chat — no memory context
     setActiveSessionId(id);
     // Refresh the sessions list so the new item appears in the sidebar
     void fetchSessions();
@@ -632,7 +726,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v0.9.4 — memory stats in settings
+          v1.0.0 — stable release
         </div>
       </aside>
 
