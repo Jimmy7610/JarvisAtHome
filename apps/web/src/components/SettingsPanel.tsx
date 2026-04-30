@@ -214,7 +214,7 @@ export default function SettingsPanel({
           {/* Identity row */}
           <div className="flex items-center gap-2 py-1.5">
             <span className="text-sm font-semibold text-slate-200">Jarvis</span>
-            <MonoValue>v{settings?.appVersion ?? "1.2.1"}</MonoValue>
+            <MonoValue>v{settings?.appVersion ?? "1.2.2"}</MonoValue>
             <Badge variant="done" label="stable" />
           </div>
           {/* One-line summary */}
@@ -597,6 +597,9 @@ export default function SettingsPanel({
           <SettingRow label="Multi-file proposal template helper">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Multi-file proposal validation UI">
+            <Badge variant="done" />
+          </SettingRow>
           <SettingRow label="Agent workflows">
             <Badge variant="planned" />
           </SettingRow>
@@ -604,7 +607,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "1.2.1"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "1.2.2"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

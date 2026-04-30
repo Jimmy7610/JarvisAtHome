@@ -470,6 +470,62 @@ function isMultiFileProposal(obj: unknown): obj is MultiFileProposalJson {
   );
 }
 
+// ── Multi-file proposal validation helpers ────────────────────────────────────
+
+// Format a byte count (from content.length; valid for ASCII files) as a compact
+// human-readable size string.  Used in the pre-approval validation summary row.
+function formatContentSize(bytes: number): string {
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+// Warning entry returned by computeMultiProposalWarnings.
+// key is stable for React list rendering; message is user-visible.
+interface MultiProposalWarning {
+  key: string;
+  message: string;
+}
+
+// Compute pre-approval advisory warnings for a pending multi-file proposal.
+// These are informational only — backend validation is the authoritative safety
+// layer and these checks must never replace it.
+//
+// Checks performed (all frontend-only, O(n) over the proposal list):
+//   1. Duplicate path — same normalised path appears in two or more entries.
+//   2. Empty content  — content string is empty or whitespace-only.
+function computeMultiProposalWarnings(
+  proposals: Array<{ path: string; operation: string; content: string }>
+): MultiProposalWarning[] {
+  const warnings: MultiProposalWarning[] = [];
+
+  // 1. Duplicate path (case-insensitive, backslash → forward-slash normalised)
+  const seen = new Map<string, number>(); // normalised path → 1-based index of first occurrence
+  for (let i = 0; i < proposals.length; i++) {
+    const normalised = proposals[i].path.toLowerCase().replace(/\\/g, "/").trim();
+    const prev = seen.get(normalised);
+    if (prev !== undefined) {
+      warnings.push({
+        key: `dup-${i}`,
+        message: `Duplicate path: files ${prev} and ${i + 1} both target workspace/${proposals[i].path}`,
+      });
+    } else {
+      seen.set(normalised, i + 1); // 1-based for readable message
+    }
+  }
+
+  // 2. Empty content
+  for (let i = 0; i < proposals.length; i++) {
+    if (!proposals[i].content.trim()) {
+      warnings.push({
+        key: `empty-${i}`,
+        message: `File ${i + 1} (${proposals[i].path}) has empty content`,
+      });
+    }
+  }
+
+  return warnings;
+}
+
 interface ChatMessage {
   role: "user" | "assistant" | "error" | "cancelled";
   text: string;
@@ -2442,32 +2498,60 @@ export default function ChatPanel({
           {/* ── Multi-file proposal section (v2 format) ──────────────────────── */}
           {chatMultiProposals && (
             <>
-              {/* Summary + file count */}
+              {/* Validation summary — stats + warnings */}
               <div className="px-6 pb-1">
+                {/* Optional human-readable summary from the proposal JSON */}
                 {chatMultiSummary && (
                   <p className="text-xs text-amber-600/80 italic mb-1">
                     {chatMultiSummary}
                   </p>
                 )}
+
+                {/* Compact stats row: file count · create count · update count · total size */}
                 <p className="text-xs text-amber-700">
-                  {chatMultiProposals.length} file{chatMultiProposals.length !== 1 ? "s" : ""} pending review:
+                  {chatMultiProposals.length} file{chatMultiProposals.length !== 1 ? "s" : ""}
+                  {" · "}
+                  {chatMultiProposals.filter((p) => p.operation === "create").length} create
+                  {" · "}
+                  {chatMultiProposals.filter((p) => p.operation === "edit").length} update
+                  {" · "}
+                  {formatContentSize(
+                    chatMultiProposals.reduce((sum, p) => sum + p.content.length, 0)
+                  )}{" "}total
                 </p>
+
+                {/* Advisory warnings — non-blocking; backend remains the source of truth */}
+                {computeMultiProposalWarnings(chatMultiProposals).map((w) => (
+                  <p key={w.key} className="mt-1 text-xs text-amber-500/80">
+                    ⚠ {w.message}
+                  </p>
+                ))}
               </div>
 
               {/* Per-file diff sections */}
               {chatMultiProposals.map((proposal, idx) => (
                 <div key={proposal.id} className="mx-6 mb-2">
-                  {/* File header — path, operation badge, file counter */}
+                  {/* File header — path · operation badge · content size · counter */}
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-t">
                     <span className="text-amber-500/80 font-mono text-xs truncate flex-1">
                       workspace/{proposal.path}
                     </span>
-                    {proposal.operation === "create" && (
-                      <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium flex-shrink-0">
+                    {/* Operation badge: green "new file" for create, muted "update" for edit */}
+                    {proposal.operation === "create" ? (
+                      <span className="text-xs px-1.5 py-px rounded bg-green-900/30 text-green-400 border border-green-600/30 font-medium flex-shrink-0">
                         new file
                       </span>
+                    ) : (
+                      <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium flex-shrink-0">
+                        update
+                      </span>
                     )}
-                    <span className="text-xs text-slate-600 flex-shrink-0 select-none">
+                    {/* Content size (character count; valid for ASCII workspace files) */}
+                    <span className="text-xs text-slate-600 flex-shrink-0 select-none font-mono">
+                      {formatContentSize(proposal.content.length)}
+                    </span>
+                    {/* File counter */}
+                    <span className="text-xs text-slate-700 flex-shrink-0 select-none">
                       {idx + 1}/{chatMultiProposals.length}
                     </span>
                   </div>
