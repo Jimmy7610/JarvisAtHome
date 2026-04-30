@@ -124,9 +124,10 @@ function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
 //      JSON object using brace balancing, correctly skipping braces inside strings
 //      and handling all JSON escape sequences.
 //
-// The extracted JSON is only accepted if it parses successfully and contains
-// non-empty `path` and `content` string fields. This prevents any prose from
-// being misidentified as a proposal.
+// The extracted JSON is only accepted if it parses successfully and matches a
+// recognised proposal shape: v2 multi-file ({type, version, files[]}) takes
+// priority; v1 single-file ({path, content}) is the fallback.
+// This prevents any prose from being misidentified as a proposal.
 
 // ─── Multiline-JSON repair fallback ──────────────────────────────────────────
 //
@@ -280,24 +281,39 @@ function extractWriteProposal(text: string): ProposalExtract | null {
           // May be replaced with re-encoded JSON if the repair fallback fires.
           let jsonBody = text.slice(jsonStart, jsonEnd);
 
-          // Validate: must be parseable JSON with a non-empty path string and a
-          // content string.  If JSON.parse fails, attempt the multiline repair
-          // fallback — local Ollama models sometimes emit literal newline
-          // characters inside JSON string values instead of \n escape sequences.
-          let parsed: { path?: unknown; content?: unknown };
+          // Validate: must parse as a recognised proposal shape — v1 or v2.
+          //
+          //   v2 multi-file: { type: "workspace_write_proposal", version: 2, files: [...] }
+          //   v1 single-file: { path: string (non-empty), content: string }
+          //
+          // Check v2 first so the v1 path + content requirement does not incorrectly
+          // reject a perfectly valid v2 JSON block that has neither field at the top level.
+          //
+          // If JSON.parse fails, attempt the v1 multiline-repair fallback — local Ollama
+          // models sometimes emit literal newlines inside JSON string values.  The repair
+          // is v1-only; v2 proposals from the model are always well-formed JSON.
+          //
+          // isMultiFileProposal is a hoisted function declaration — safe to call here
+          // even though it is declared later in the source file.
+          let parsedRaw: unknown;
           try {
-            parsed = JSON.parse(jsonBody) as { path?: unknown; content?: unknown };
+            parsedRaw = JSON.parse(jsonBody);
           } catch {
-            // JSON.parse failed — try the multiline-JSON repair fallback.
+            // JSON.parse failed — attempt the v1 multiline-JSON repair fallback.
             const repaired = repairMultilineProposalJson(jsonBody);
             if (!repaired) return null; // Cannot repair — not a valid proposal.
             // Re-encode as standard valid JSON so every downstream caller that
             // calls JSON.parse(result.jsonBody) works without modification.
             jsonBody = JSON.stringify({ path: repaired.path, content: repaired.content });
-            parsed = repaired;
+            parsedRaw = repaired;
           }
-          if (typeof parsed.path !== "string" || !parsed.path.trim()) return null;
-          if (typeof parsed.content !== "string") return null;
+          // v2 multi-file — accept without requiring path/content
+          if (!isMultiFileProposal(parsedRaw)) {
+            // v1 single-file — require non-empty path and content string
+            const v1 = parsedRaw as { path?: unknown; content?: unknown };
+            if (typeof v1.path !== "string" || !v1.path.trim()) return null;
+            if (typeof v1.content !== "string") return null;
+          }
 
           // Step 5 — consume the optional closing fence that follows the JSON object
           let blockEnd = jsonEnd;
@@ -323,23 +339,27 @@ function extractWriteProposal(text: string): ProposalExtract | null {
 // and output a bare JSON object or a plain fenced JSON block instead.
 //
 // STRICT conditions — the fallback ONLY fires when ALL of these hold:
-//   1. The ENTIRE assistant response is just a JSON object or a single fenced block.
+//   1. The ENTIRE text is just a JSON object or a single fenced block (```json / ```).
 //      Any surrounding explanatory prose causes immediate rejection.
+//      Note: fenced blocks using the ```jarvis-write-proposal language tag are
+//      handled by extractWriteProposal, not this function.
 //   2. JSON.parse succeeds on the extracted body.
-//   3. parsed.path is a non-empty string.
-//   4. parsed.content is a string.
+//   3. The parsed JSON matches a recognised proposal shape:
+//        v2: { type: "workspace_write_proposal", version: 2, files: [...] }
+//        v1: { path: string (non-empty), content: string }
 //
 // The fallback still creates only a PENDING proposal — backend validation and the
 // user's Approve click are still required before any file is written.
 //
 // Accepted:
-//   Raw JSON only:    {"path":"file.md","content":"# Hello\nWorld"}
+//   Bare JSON (v1):   {"path":"file.md","content":"# Hello\nWorld"}
+//   Bare JSON (v2):   {"type":"workspace_write_proposal","version":2,"files":[...]}
 //   Fenced JSON only: ```json\n{...}\n```  or  ```\n{...}\n```
 //
 // Rejected:
 //   Any surrounding explanatory prose or extra text
 //   Malformed or partial JSON
-//   JSON without required path and content string fields
+//   JSON without a recognised v1 or v2 proposal shape
 
 function extractBareJsonProposal(text: string): string | null {
   const trimmed = text.trim();
@@ -365,17 +385,30 @@ function extractBareJsonProposal(text: string): string | null {
 
   if (candidate === null) return null;
 
-  // Validate: must parse and have the required proposal shape
-  let parsed: { path?: unknown; content?: unknown };
+  // Validate: must parse and have a recognised proposal shape (v1 or v2).
+  // v1 single-file: { path: string, content: string }
+  // v2 multi-file:  { type: "workspace_write_proposal", version: 2, files: [...] }
+  //
+  // isMultiFileProposal is a function declaration (hoisted) so calling it here is safe
+  // even though it is defined later in the module.
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(candidate) as { path?: unknown; content?: unknown };
+    parsed = JSON.parse(candidate);
   } catch {
     return null; // malformed or partial JSON
   }
-  if (typeof parsed.path !== "string" || !parsed.path.trim()) return null;
-  if (typeof parsed.content !== "string") return null;
+  // v1 check
+  const parsedV1 = parsed as { path?: unknown; content?: unknown };
+  if (typeof parsedV1.path === "string" && parsedV1.path.trim() &&
+      typeof parsedV1.content === "string") {
+    return candidate;
+  }
+  // v2 check
+  if (isMultiFileProposal(parsed)) {
+    return candidate;
+  }
 
-  return candidate;
+  return null;
 }
 
 // Adapter: presents the ProposalExtract in the shape expected by
@@ -408,6 +441,33 @@ function matchProposalBlock(
     fullMatch: trimmedContent,
     jsonBody: bareJson,
   };
+}
+
+// ── Multi-file proposal types (v2 format) ─────────────────────────────────────
+
+// The expected JSON shape for a v2 multi-file write proposal
+type MultiFileProposalJson = {
+  type: "workspace_write_proposal";
+  version: 2;
+  summary?: string;
+  files: Array<{
+    operation: "create" | "update";
+    path: string;
+    content: string;
+  }>;
+};
+
+// Type guard — confirms the parsed JSON is a v2 multi-file proposal.
+// Checks: correct type string, version 2, and a non-empty files array.
+function isMultiFileProposal(obj: unknown): obj is MultiFileProposalJson {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    o.type === "workspace_write_proposal" &&
+    o.version === 2 &&
+    Array.isArray(o.files) &&
+    (o.files as unknown[]).length > 0
+  );
 }
 
 interface ChatMessage {
@@ -747,6 +807,22 @@ export default function ChatPanel({
   // Set when the clipboard write fails — shown inline so the user can react.
   const [chatCopyError, setChatCopyError] = useState<string | null>(null);
 
+  // ── Multi-file proposal state (v2 format) ─────────────────────────────────
+  // Set when the assistant proposes multiple files in a single response block.
+  // Each entry mirrors the single-file chatProposal shape.
+  const [chatMultiProposals, setChatMultiProposals] = useState<Array<{
+    id: string;
+    path: string;
+    operation: "edit" | "create";
+    diff: DiffLine[];
+    // Full proposed content — stored so it can be used if needed after approval.
+    content: string;
+  }> | null>(null);
+  // Human-readable summary from the v2 proposal JSON "summary" field (optional).
+  const [chatMultiSummary, setChatMultiSummary] = useState<string | null>(null);
+  // true while sequential approve-all is in progress (prevents double-click).
+  const [chatApproveAllLoading, setChatApproveAllLoading] = useState(false);
+
   // ── Voice input state (Web Speech API) ───────────────────────────────────
   // Whether the browser supports SpeechRecognition — set after mount to avoid SSR mismatch.
   const [voiceSupported, setVoiceSupported] = useState(false);
@@ -1006,27 +1082,24 @@ export default function ChatPanel({
 
   // Called after streaming ends. Scans the full response text for a
   // jarvis-write-proposal fenced block and, if found, calls POST /files/propose-write.
-  // On success the diff is stored in chatProposal and shown in the UI.
-  // Nothing is written to disk here — the user must click "Approve write".
+  // Supports both v1 (single-file: {path, content}) and v2 (multi-file: {type, version,
+  // summary, files[]}) proposal formats. Nothing is written to disk here — the user
+  // must click "Approve write" or "Approve all N files".
   async function detectAndPropose(text: string): Promise<void> {
     const result = matchProposalBlock(text);
     if (!result) return;
 
-    // Distinguish in the activity log whether the preferred marker path or the bare-JSON fallback fired
+    // Distinguish in the activity log whether the preferred marker path or the
+    // bare-JSON fallback fired (no "jarvis-write-proposal" marker in the text).
     const isBareJsonFallback = !text.includes("jarvis-write-proposal");
-    onActivity?.(
-      isBareJsonFallback
-        ? "Chat write proposal detected (bare JSON fallback) — creating proposal…"
-        : "Chat write proposal detected — creating proposal…",
-      "info"
-    );
     setChatProposalLoading(true);
     setChatProposalError(null);
     setChatWriteSuccess(false);
 
-    let parsed: { path?: unknown; content?: unknown };
+    // Parse the JSON body extracted by matchProposalBlock.
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(result.jsonBody) as { path?: unknown; content?: unknown };
+      parsed = JSON.parse(result.jsonBody);
     } catch {
       const errMsg = "Failed to parse write proposal JSON from assistant response.";
       setChatProposalError(errMsg);
@@ -1035,10 +1108,124 @@ export default function ChatPanel({
       return;
     }
 
+    // ── v2 multi-file proposal ──────────────────────────────────────────────
+    if (isMultiFileProposal(parsed)) {
+      const fileCount = parsed.files.length;
+      const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : null;
+
+      onActivity?.(
+        isBareJsonFallback
+          ? `Chat multi-file write proposal detected (bare JSON fallback) — ${fileCount} file${fileCount !== 1 ? "s" : ""}…`
+          : `Chat write proposal detected: ${fileCount} file${fileCount !== 1 ? "s" : ""} — creating proposals…`,
+        "info"
+      );
+
+      // Guard: max 5 files per proposal to prevent runaway writes.
+      if (fileCount > 5) {
+        const errMsg = `Write proposal contains ${fileCount} files; maximum is 5.`;
+        setChatProposalError(errMsg);
+        setChatProposalLoading(false);
+        onActivity?.(`Chat write proposal rejected: ${errMsg}`, "error");
+        return;
+      }
+
+      // Validate each file entry before making any API calls.
+      for (let i = 0; i < parsed.files.length; i++) {
+        const f = parsed.files[i];
+        if (!f.path || typeof f.path !== "string" || f.path.trim() === "") {
+          const errMsg = `File ${i + 1} is missing a path.`;
+          setChatProposalError(errMsg);
+          setChatProposalLoading(false);
+          onActivity?.(`Chat write proposal invalid: ${errMsg}`, "error");
+          return;
+        }
+        if (typeof f.content !== "string") {
+          const errMsg = `File ${i + 1} (${f.path}) is missing content.`;
+          setChatProposalError(errMsg);
+          setChatProposalLoading(false);
+          onActivity?.(`Chat write proposal invalid: ${errMsg}`, "error");
+          return;
+        }
+        if (f.operation !== "create" && f.operation !== "update") {
+          const errMsg = `File ${i + 1} (${f.path}) has invalid operation "${String(f.operation)}". Use "create" or "update".`;
+          setChatProposalError(errMsg);
+          setChatProposalLoading(false);
+          onActivity?.(`Chat write proposal invalid: ${errMsg}`, "error");
+          return;
+        }
+      }
+
+      // Call POST /files/propose-write for each file sequentially.
+      // Stops on first failure so the user doesn't get a half-committed state.
+      const proposals: Array<{
+        id: string;
+        path: string;
+        operation: "edit" | "create";
+        diff: DiffLine[];
+        content: string;
+      }> = [];
+
+      try {
+        for (const f of parsed.files) {
+          const res = await fetch(`${API_URL}/files/propose-write`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: f.path.trim(), content: f.content }),
+          });
+          const data = (await res.json()) as {
+            ok: boolean;
+            id?: string;
+            path?: string;
+            operation?: "edit" | "create";
+            diff?: DiffLine[];
+            error?: string;
+          };
+          if (!data.ok || !data.id || !data.diff) {
+            const errMsg = data.error ?? `Backend rejected proposal for ${f.path}.`;
+            setChatProposalError(errMsg);
+            setChatProposalLoading(false);
+            onActivity?.(`Chat write proposal failed for ${f.path}: ${errMsg}`, "error");
+            return;
+          }
+          proposals.push({
+            id: data.id,
+            path: data.path ?? f.path.trim(),
+            operation: data.operation ?? "edit",
+            diff: data.diff,
+            content: f.content,
+          });
+        }
+      } catch {
+        const errMsg = "API unreachable — is the Jarvis API running?";
+        setChatProposalError(errMsg);
+        setChatProposalLoading(false);
+        onActivity?.(`Chat write proposal failed: ${errMsg}`, "error");
+        return;
+      }
+
+      setChatMultiProposals(proposals);
+      setChatMultiSummary(summary);
+      onActivity?.(
+        `Chat write proposal: ${fileCount} file${fileCount !== 1 ? "s" : ""} pending approval`,
+        "write"
+      );
+      setChatProposalLoading(false);
+      return;
+    }
+
+    // ── v1 single-file proposal ─────────────────────────────────────────────
+    const parsedV1 = parsed as { path?: unknown; content?: unknown };
+    onActivity?.(
+      isBareJsonFallback
+        ? "Chat write proposal detected (bare JSON fallback) — creating proposal…"
+        : "Chat write proposal detected — creating proposal…",
+      "info"
+    );
+
     const proposalPath =
-      typeof parsed.path === "string" ? parsed.path.trim() : "";
+      typeof parsedV1.path === "string" ? parsedV1.path.trim() : "";
     const proposalContent =
-      typeof parsed.content === "string" ? parsed.content : null;
+      typeof parsedV1.content === "string" ? parsedV1.content : null;
 
     if (!proposalPath || proposalContent === null) {
       const errMsg =
@@ -1095,6 +1282,62 @@ export default function ChatPanel({
     }
   }
 
+  // Sequential approve-all for v2 multi-file proposals.
+  // Calls POST /files/approve-write for each pending proposal in order.
+  // Stops on the first failure and reports which file failed.
+  async function handleApproveAll(): Promise<void> {
+    if (!chatMultiProposals) return;
+    const proposals = chatMultiProposals;
+    setChatApproveAllLoading(true);
+    setChatApproveError(null);
+
+    try {
+      for (const proposal of proposals) {
+        const res = await fetch(`${API_URL}/files/approve-write`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proposalId: proposal.id }),
+        });
+        const data = (await res.json()) as {
+          ok: boolean;
+          path?: string;
+          written?: boolean;
+          error?: string;
+        };
+        if (!data.ok) {
+          const errMsg = data.error ?? "Failed to approve write.";
+          setChatApproveError(`Failed to write workspace/${proposal.path}: ${errMsg}`);
+          onActivity?.(
+            `Chat write approval failed for ${proposal.path}: ${errMsg}`,
+            "error"
+          );
+          return;
+        }
+        onActivity?.(
+          `Chat write approved and applied to workspace/${proposal.path}`,
+          "write"
+        );
+      }
+      // All files approved successfully
+      onActivity?.(
+        `Chat write approved: ${proposals.length} file${proposals.length !== 1 ? "s" : ""} written`,
+        "write"
+      );
+      setChatMultiProposals(null);
+      setChatMultiSummary(null);
+      setChatWriteSuccess(true);
+      // Multi-file success uses null path — the generic success message shows instead of the draft UI.
+      setChatApprovedPath(null);
+      setChatApprovedContent(null);
+    } catch {
+      const errMsg = "API unreachable — is the Jarvis API running?";
+      setChatApproveError(errMsg);
+      onActivity?.(`Chat write approval failed: ${errMsg}`, "error");
+    } finally {
+      setChatApproveAllLoading(false);
+    }
+  }
+
   async function handleChatApprove(): Promise<void> {
     if (!chatProposal) return;
     setChatApproveLoading(true);
@@ -1147,12 +1390,20 @@ export default function ChatPanel({
 
   function handleChatCancelProposal(): void {
     const cancelledPath = chatProposal?.path;
+    const multiCount = chatMultiProposals?.length ?? 0;
     setChatProposal(null);
+    setChatMultiProposals(null);
+    setChatMultiSummary(null);
     setChatProposalError(null);
     setChatApproveError(null);
     if (cancelledPath) {
       onActivity?.(
         `Chat write proposal cancelled for workspace/${cancelledPath}`,
+        "write"
+      );
+    } else if (multiCount > 0) {
+      onActivity?.(
+        `Chat write proposal cancelled (${multiCount} file${multiCount !== 1 ? "s" : ""})`,
         "write"
       );
     }
@@ -1473,8 +1724,11 @@ export default function ChatPanel({
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
-    // Clear any previous chat-created write proposal so the next response starts fresh
+    // Clear any previous chat-created write proposal so the next response starts fresh.
+    // Covers both single-file (chatProposal) and multi-file (chatMultiProposals) state.
     setChatProposal(null);
+    setChatMultiProposals(null);
+    setChatMultiSummary(null);
     setChatProposalError(null);
     setChatApproveError(null);
     setChatWriteSuccess(false);
@@ -1483,6 +1737,58 @@ export default function ChatPanel({
     setChatCopied(false);
     setChatCopyError(null);
     setSpeechError(null);
+
+    // ── User-pasted proposal interception ─────────────────────────────────────
+    // If the trimmed input is (or contains) a jarvis-write-proposal block — either
+    // with the explicit ```jarvis-write-proposal marker or as bare JSON — intercept
+    // it here before calling Ollama.  We parse and create the pending proposal
+    // locally using the same detectAndPropose() path as assistant-generated proposals.
+    //
+    // Why this is needed: without interception the raw JSON lands in the chat input,
+    // gets sent to /chat/stream, and the model responds with "I can't help with that"
+    // instead of the Pending Write Approval banner appearing.
+    //
+    // Handles both v1 (single-file: {path, content}) and v2 (multi-file: {type,
+    // version, files[]}) formats.  No Ollama call is made for intercepted proposals.
+    const userProposalMatch = matchProposalBlock(trimmed);
+    if (userProposalMatch) {
+      // Determine file count for the activity log entry
+      let userProposalFileCount = 1;
+      try {
+        const parsedCheck = JSON.parse(userProposalMatch.jsonBody) as unknown;
+        if (isMultiFileProposal(parsedCheck)) {
+          userProposalFileCount = parsedCheck.files.length;
+        }
+      } catch { /* ignore — detectAndPropose will surface any parse error in the banner */ }
+
+      onActivity?.(
+        `Write proposal detected from user input: ${userProposalFileCount} file${userProposalFileCount !== 1 ? "s" : ""}`,
+        "info"
+      );
+
+      // Show the user bubble with the raw pasted text (same as any other user message)
+      setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+      setInput("");
+
+      // Persist the user message and auto-title the session if this is the first message
+      const isFirstUserMessage = !messages.some((m) => m.role === "user");
+      const interceptSid = sessionIdRef.current;
+      if (interceptSid !== null) {
+        void persistMessage(interceptSid, "user", trimmed);
+        if (isFirstUserMessage) {
+          void updateSessionTitle(interceptSid, trimmed.slice(0, 50)).then(() => {
+            onSessionUpdated?.();
+          });
+        }
+      }
+
+      // Run the same proposal detection used for assistant responses.
+      // detectAndPropose() handles v1/v2 detection, per-file propose-write API calls,
+      // state updates (chatProposal / chatMultiProposals), and activity log events.
+      await detectAndPropose(trimmed);
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Snapshot and immediately clear both attachments so neither can be sent twice
     const attachmentSnapshot = attachment ?? null;
@@ -1878,7 +2184,7 @@ export default function ChatPanel({
       </div>
 
       {/* Chat write proposal banner — shown when the assistant response contained a proposal block */}
-      {(chatProposal || chatProposalLoading || chatProposalError || chatWriteSuccess) && (
+      {(chatProposal || chatMultiProposals || chatProposalLoading || chatProposalError || chatWriteSuccess) && (
         <div className="flex-shrink-0 border-t border-amber-500/20 bg-amber-900/10">
           {/* Banner header */}
           <div className="flex items-center justify-between px-6 py-2">
@@ -1886,10 +2192,16 @@ export default function ChatPanel({
               <p className="text-xs font-semibold text-amber-400 uppercase tracking-widest">
                 {chatWriteSuccess ? "Write applied" : "Pending write approval"}
               </p>
-              {/* Email draft badge — visible while a drafts/ proposal is pending */}
+              {/* Email draft badge — visible while a single drafts/ proposal is pending */}
               {chatProposal?.path.startsWith("drafts/") && (
                 <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium">
                   email draft
+                </span>
+              )}
+              {/* File count badge — visible for multi-file proposals */}
+              {chatMultiProposals && (
+                <span className="text-xs px-1.5 py-px rounded bg-amber-500/10 text-amber-500/80 border border-amber-500/20 font-medium">
+                  {chatMultiProposals.length} files
                 </span>
               )}
             </div>
@@ -1897,6 +2209,8 @@ export default function ChatPanel({
               <button
                 onClick={() => {
                   setChatProposal(null);
+                  setChatMultiProposals(null);
+                  setChatMultiSummary(null);
                   setChatProposalError(null);
                   setChatApproveError(null);
                   setChatWriteSuccess(false);
@@ -2053,6 +2367,105 @@ export default function ChatPanel({
                   <button
                     onClick={handleChatCancelProposal}
                     disabled={chatApproveLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Multi-file proposal section (v2 format) ──────────────────────── */}
+          {chatMultiProposals && (
+            <>
+              {/* Summary + file count */}
+              <div className="px-6 pb-1">
+                {chatMultiSummary && (
+                  <p className="text-xs text-amber-600/80 italic mb-1">
+                    {chatMultiSummary}
+                  </p>
+                )}
+                <p className="text-xs text-amber-700">
+                  {chatMultiProposals.length} file{chatMultiProposals.length !== 1 ? "s" : ""} pending review:
+                </p>
+              </div>
+
+              {/* Per-file diff sections */}
+              {chatMultiProposals.map((proposal, idx) => (
+                <div key={proposal.id} className="mx-6 mb-2">
+                  {/* File header — path, operation badge, file counter */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-t">
+                    <span className="text-amber-500/80 font-mono text-xs truncate flex-1">
+                      workspace/{proposal.path}
+                    </span>
+                    {proposal.operation === "create" && (
+                      <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium flex-shrink-0">
+                        new file
+                      </span>
+                    )}
+                    <span className="text-xs text-slate-600 flex-shrink-0 select-none">
+                      {idx + 1}/{chatMultiProposals.length}
+                    </span>
+                  </div>
+                  {/* Scrollable diff body */}
+                  <div
+                    className="overflow-y-auto border border-t-0 border-slate-700/60 rounded-b"
+                    style={{ maxHeight: "140px" }}
+                  >
+                    {getDisplayLines(proposal.diff).map((line, i) => {
+                      if (line.type === "gap") {
+                        return (
+                          <div
+                            key={i}
+                            className="pl-2 pr-3 py-0.5 text-xs text-slate-600 bg-slate-800/40 text-center select-none border-l-2 border-transparent"
+                          >
+                            ···&nbsp;&nbsp;{line.count} unchanged line{line.count !== 1 ? "s" : ""}
+                          </div>
+                        );
+                      }
+                      const rowClass =
+                        line.type === "added"
+                          ? "bg-green-900/25 border-l-2 border-green-600 text-green-300"
+                          : line.type === "removed"
+                          ? "bg-red-900/20 border-l-2 border-red-700 text-red-300"
+                          : "border-l-2 border-transparent text-slate-400";
+                      const prefix =
+                        line.type === "added" ? "+" : line.type === "removed" ? "−" : " ";
+                      return (
+                        <div
+                          key={i}
+                          className={`flex gap-2 pl-2 pr-3 py-0.5 font-mono text-xs leading-relaxed ${rowClass}`}
+                        >
+                          <span className="flex-shrink-0 select-none w-3">{prefix}</span>
+                          <span className="whitespace-pre-wrap break-all">{line.content}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {/* Approve all / Cancel */}
+              <div className="px-6 pb-3 space-y-1.5">
+                {chatApproveError && (
+                  <p className="text-xs text-red-500/70 text-center">
+                    {chatApproveError}
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void handleApproveAll()}
+                    disabled={chatApproveAllLoading}
+                    className="flex-1 text-xs py-1.5 rounded bg-green-900/20 text-green-400 border border-green-500/20 hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {chatApproveAllLoading
+                      ? "Writing…"
+                      : `Approve all ${chatMultiProposals.length} file${chatMultiProposals.length !== 1 ? "s" : ""}`}
+                  </button>
+                  <button
+                    onClick={handleChatCancelProposal}
+                    disabled={chatApproveAllLoading}
                     className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Cancel
@@ -2348,25 +2761,38 @@ export default function ChatPanel({
 }
 
 // Split an assistant message into segments around a jarvis-write-proposal block.
-// Returns { before, proposalPath, after } so AssistantMessage can render a styled callout
-// instead of the raw fenced block. Returns null when no proposal block is present.
+// Returns { before, after, paths, summary } so AssistantMessage can render a styled
+// callout instead of the raw fenced block. Returns null when no proposal block is present.
+// Handles both v1 (single path) and v2 (multiple paths with optional summary).
 function parseProposalBlock(text: string): {
   before: string;
-  proposalPath: string;
   after: string;
+  paths: string[];
+  summary: string;
 } | null {
   const result = matchProposalBlock(text);
   if (!result) return null;
   const before = text.slice(0, result.index).trimEnd();
   const after = text.slice(result.index + result.fullMatch.length).trimStart();
-  let proposalPath = "";
+  let paths: string[] = [];
+  let summary = "";
   try {
-    const parsed = JSON.parse(result.jsonBody) as { path?: unknown };
-    if (typeof parsed.path === "string") proposalPath = parsed.path.trim();
+    const parsed = JSON.parse(result.jsonBody) as unknown;
+    if (isMultiFileProposal(parsed)) {
+      // v2: extract all file paths and the optional summary
+      paths = parsed.files.map((f) => f.path.trim()).filter(Boolean);
+      summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+    } else {
+      // v1: single path field
+      const v1 = parsed as { path?: unknown };
+      if (typeof v1.path === "string" && v1.path.trim()) {
+        paths = [v1.path.trim()];
+      }
+    }
   } catch {
-    // JSON parse failed — callout still renders without the path name
+    // JSON parse failed — callout still renders without path/summary info
   }
-  return { before, proposalPath, after };
+  return { before, after, paths, summary };
 }
 
 function AssistantMessage({
@@ -2413,12 +2839,31 @@ function AssistantMessage({
                 </span>
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-amber-400">
-                    Jarvis proposed a workspace file change
+                    {proposal.paths.length > 1
+                      ? `Jarvis proposed ${proposal.paths.length} workspace file changes`
+                      : "Jarvis proposed a workspace file change"}
                   </p>
-                  {proposal.proposalPath && (
-                    <p className="text-xs text-amber-600 mt-0.5 font-mono break-all">
-                      workspace/{proposal.proposalPath}
+                  {/* Optional summary from v2 proposals */}
+                  {proposal.summary && (
+                    <p className="text-xs text-amber-600/80 mt-0.5 italic leading-relaxed">
+                      {proposal.summary}
                     </p>
+                  )}
+                  {/* Single-file path */}
+                  {proposal.paths.length === 1 && (
+                    <p className="text-xs text-amber-600 mt-0.5 font-mono break-all">
+                      workspace/{proposal.paths[0]}
+                    </p>
+                  )}
+                  {/* Multi-file path list */}
+                  {proposal.paths.length > 1 && (
+                    <ul className="mt-0.5 space-y-0.5">
+                      {proposal.paths.map((p, i) => (
+                        <li key={i} className="text-xs text-amber-600 font-mono break-all">
+                          workspace/{p}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   <p className="text-xs text-amber-800 mt-1 leading-relaxed">
                     Review the diff in the approval panel below before applying.
