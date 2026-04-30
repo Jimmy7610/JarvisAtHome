@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MemoryContextItem } from "@/app/page";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
@@ -21,6 +21,25 @@ interface MemoryItem {
 
 // Raw shape returned by the API — pinned is a SQLite INTEGER (0 or 1)
 type MemoryApiRow = Omit<MemoryItem, "pinned"> & { pinned: number };
+
+// ── Export / import types ─────────────────────────────────────────────────────
+
+// A single memory entry in the portable export format.
+// No database ID — only semantic content fields.
+type ExportMemoryEntry = {
+  type: MemoryType;
+  title: string;
+  content: string;
+  pinned: boolean;
+};
+
+// Top-level export payload shape (written to the downloaded file and accepted by import).
+type ExportPayload = {
+  format: string;
+  version: number;
+  exportedAt: string;
+  memories: ExportMemoryEntry[];
+};
 
 // Convert an API row to the frontend MemoryItem shape
 function fromApiRow(row: MemoryApiRow): MemoryItem {
@@ -156,6 +175,44 @@ export default function MemoryPanel({
   type TypeFilter = "all" | "preference" | "project" | "note" | "in-chat";
   const [activeTypeFilter, setActiveTypeFilter] = useState<TypeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // ── Export / import state ────────────────────────────────────────────────────
+  // Export: a loading flag while the fetch + blob download runs.
+  const [exporting, setExporting] = useState(false);
+
+  // Import: hidden file input ref — clicked programmatically on "Import" button press.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Import preview — populated after the user selects a valid JSON file.
+  // Shown in a confirmation panel before the actual POST.
+  const [importPreview, setImportPreview] = useState<{
+    fileName: string;
+    memories: ExportMemoryEntry[];
+    byType: Record<string, number>;
+  } | null>(null);
+
+  // Import loading flag — true while the POST /memory/import request is in-flight.
+  const [importing, setImporting] = useState(false);
+
+  // Import result — populated after a successful POST; cleared on next import attempt.
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    skippedDuplicates: number;
+    invalid: number;
+  } | null>(null);
+
+  // Import error — set on parse failure or API error; cleared on next file select.
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // Reset all import state and clear the file input value so the same file can be
+  // re-selected after a cancel or result dismiss.
+  function resetImport(): void {
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError(null);
+    setImporting(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
   // ── Load memories ───────────────────────────────────────────────────────────
   function loadMemories(): void {
@@ -330,6 +387,163 @@ export default function MemoryPanel({
     }
   }
 
+  // ── Export memories ──────────────────────────────────────────────────────────
+  // Fetches GET /memory/export and triggers a JSON file download.
+  // Filename: jarvis-memory-export-YYYY-MM-DD.json
+  // Does not log content — only the activity event is emitted.
+  async function handleExport(): Promise<void> {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API_URL}/memory/export`);
+      const data = (await res.json()) as {
+        ok: boolean;
+        export?: ExportPayload;
+      };
+      if (!data.ok || !data.export) {
+        onActivity?.("Memory export failed", "error");
+        return;
+      }
+      // Trigger a JSON file download via a temporary <a> element
+      const blob = new Blob([JSON.stringify(data.export, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      a.href = url;
+      a.download = `jarvis-memory-export-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      onActivity?.("Memory export downloaded", "info");
+    } catch {
+      onActivity?.("Memory export failed", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // ── Import: file selection ────────────────────────────────────────────────────
+  // Called when the hidden <input type="file"> fires onChange.
+  // Reads and parses the JSON file client-side to show a preview before confirming.
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset any previous result / error
+    setImportResult(null);
+    setImportError(null);
+    setImportPreview(null);
+
+    const reader = new FileReader();
+    reader.onload = (ev): void => {
+      try {
+        const text = ev.target?.result;
+        if (typeof text !== "string") {
+          setImportError("Could not read the selected file.");
+          return;
+        }
+
+        const parsed = JSON.parse(text) as unknown;
+
+        // Validate basic shape
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          Array.isArray(parsed) ||
+          (parsed as Record<string, unknown>).format !== "jarvis-memory-export" ||
+          (parsed as Record<string, unknown>).version !== 1 ||
+          !Array.isArray((parsed as Record<string, unknown>).memories)
+        ) {
+          setImportError(
+            'Invalid export file. Expected a Jarvis memory export with format "jarvis-memory-export" and version 1.'
+          );
+          return;
+        }
+
+        const payload = parsed as ExportPayload;
+
+        // Count memories by type for the preview summary
+        const byType: Record<string, number> = {};
+        for (const m of payload.memories) {
+          if (m && typeof m === "object") {
+            const t = (m as Record<string, unknown>).type;
+            if (typeof t === "string") {
+              byType[t] = (byType[t] ?? 0) + 1;
+            }
+          }
+        }
+
+        setImportPreview({
+          fileName: file.name,
+          memories: payload.memories,
+          byType,
+        });
+      } catch {
+        setImportError(
+          "Could not parse the file. Make sure it is valid JSON."
+        );
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ── Import: confirm ───────────────────────────────────────────────────────────
+  // POSTs the preview memories to POST /memory/import, handles the result.
+  // Imported memories are NOT added to any chat context — that remains a separate
+  // explicit opt-in for each note individually.
+  async function handleImportConfirm(): Promise<void> {
+    if (!importPreview) return;
+    setImporting(true);
+    try {
+      const res = await fetch(`${API_URL}/memory/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          format: "jarvis-memory-export",
+          version: 1,
+          memories: importPreview.memories,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        imported?: number;
+        skippedDuplicates?: number;
+        invalid?: number;
+        memories?: MemoryApiRow[];
+        error?: string;
+      };
+
+      if (!data.ok) {
+        setImportPreview(null);
+        setImportError(data.error ?? "Import failed. Please try again.");
+        return;
+      }
+
+      const imported = data.imported ?? 0;
+      const skipped = data.skippedDuplicates ?? 0;
+      const inv = data.invalid ?? 0;
+
+      setImportPreview(null);
+      setImportResult({ imported, skippedDuplicates: skipped, invalid: inv });
+
+      // Log result — counts only, no content
+      onActivity?.(
+        `Memory import completed: ${imported} imported, ${skipped} duplicate${skipped !== 1 ? "s" : ""} skipped`,
+        "info"
+      );
+
+      // Reload the full memory list to show newly imported notes
+      loadMemories();
+    } catch {
+      setImportPreview(null);
+      setImportError("Could not reach the Jarvis API.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // ── Pin / favorite memory ────────────────────────────────────────────────────
   // Pinned is a manual organisation flag — it does NOT automatically include
   // the note in chat context.  "In this chat" remains a separate explicit opt-in.
@@ -427,17 +641,141 @@ export default function MemoryPanel({
               </span>
             </p>
           </div>
-          <button
-            onClick={() => { setFormOpen((v) => !v); setAddError(null); }}
-            className={`flex-shrink-0 text-xs px-3 py-1.5 rounded border transition-colors ${
-              formOpen
-                ? "border-cyan-500/50 text-cyan-400 bg-cyan-500/5"
-                : "border-slate-700 text-slate-400 hover:border-cyan-500/40 hover:text-cyan-400"
-            }`}
-          >
-            {formOpen ? "Cancel" : "+ Add memory"}
-          </button>
+          {/* Header actions — Export, Import, Add */}
+          <div className="flex flex-col gap-1.5 flex-shrink-0 items-end">
+            <button
+              onClick={() => { setFormOpen((v) => !v); setAddError(null); }}
+              className={`text-xs px-3 py-1.5 rounded border transition-colors ${
+                formOpen
+                  ? "border-cyan-500/50 text-cyan-400 bg-cyan-500/5"
+                  : "border-slate-700 text-slate-400 hover:border-cyan-500/40 hover:text-cyan-400"
+              }`}
+            >
+              {formOpen ? "Cancel" : "+ Add memory"}
+            </button>
+            {/* Export / Import — small secondary buttons */}
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => void handleExport()}
+                disabled={exporting}
+                className="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Export all memories to a JSON file"
+              >
+                {exporting ? "Exporting…" : "Export"}
+              </button>
+              <button
+                onClick={() => { resetImport(); fileInputRef.current?.click(); }}
+                className="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors"
+                title="Import memories from a JSON export file"
+              >
+                Import
+              </button>
+              {/* Hidden file input — triggered programmatically by the Import button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleFileSelect}
+                className="hidden"
+                aria-hidden="true"
+              />
+            </div>
+          </div>
         </div>
+
+        {/* ── Import error ─────────────────────────────────────────────────── */}
+        {importError && (
+          <div className="rounded-lg border border-red-500/20 bg-red-900/10 p-3 flex items-start justify-between gap-3">
+            <p className="text-xs text-red-400 leading-relaxed">{importError}</p>
+            <button
+              onClick={resetImport}
+              className="flex-shrink-0 text-xs text-red-700 hover:text-red-400 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* ── Import preview ───────────────────────────────────────────────── */}
+        {importPreview && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-widest text-amber-500/80">
+              Import preview
+            </p>
+            {/* File name */}
+            <div className="text-xs text-slate-400">
+              <span className="text-slate-500">File:</span>{" "}
+              <span className="font-mono text-slate-300">{importPreview.fileName}</span>
+            </div>
+            {/* Count summary */}
+            <div className="text-xs text-slate-400">
+              <span className="font-medium text-slate-200">{importPreview.memories.length}</span>{" "}
+              {importPreview.memories.length === 1 ? "memory" : "memories"} found
+              {Object.keys(importPreview.byType).length > 0 && (
+                <span className="text-slate-600">
+                  {" "}(
+                  {Object.entries(importPreview.byType)
+                    .map(([t, n]) => `${n} ${t}`)
+                    .join(", ")}
+                  )
+                </span>
+              )}
+            </div>
+            {/* Safety note */}
+            <p className="text-xs text-amber-600/80 leading-relaxed">
+              Importing will not automatically include any note in chat — use the
+              &quot;In this chat&quot; toggle per note to add context manually.
+              Duplicates will be skipped.
+            </p>
+            {/* Confirm / Cancel */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void handleImportConfirm()}
+                disabled={importing}
+                className="text-xs px-4 py-1.5 rounded border border-amber-500/40 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {importing ? "Importing…" : "Confirm import"}
+              </button>
+              <button
+                onClick={resetImport}
+                disabled={importing}
+                className="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Import result ─────────────────────────────────────────────────── */}
+        {importResult && (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-start justify-between gap-3">
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-emerald-400">
+                Import complete
+              </p>
+              <p className="text-xs text-slate-400">
+                {importResult.imported} imported
+                {importResult.skippedDuplicates > 0 && (
+                  <span className="text-slate-600">
+                    {" "}· {importResult.skippedDuplicates} duplicate{importResult.skippedDuplicates !== 1 ? "s" : ""} skipped
+                  </span>
+                )}
+                {importResult.invalid > 0 && (
+                  <span className="text-red-500/70">
+                    {" "}· {importResult.invalid} invalid
+                  </span>
+                )}
+              </p>
+            </div>
+            <button
+              onClick={resetImport}
+              className="flex-shrink-0 text-xs text-slate-600 hover:text-slate-400 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Chat context selection summary — shown when one or more notes are selected */}
         {selectedMemoryIds.size > 0 && (
