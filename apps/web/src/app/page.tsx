@@ -737,7 +737,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.1.1 — memory filter and search
+          v1.1.2 — pin favorite memories
         </div>
       </aside>
 

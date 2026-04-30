@@ -14,8 +14,26 @@ interface MemoryItem {
   type: MemoryType;
   title: string;
   content: string;
+  pinned: boolean;  // true = user has pinned/favorited this note
   created_at: string;
   updated_at: string;
+}
+
+// Raw shape returned by the API — pinned is a SQLite INTEGER (0 or 1)
+type MemoryApiRow = Omit<MemoryItem, "pinned"> & { pinned: number };
+
+// Convert an API row to the frontend MemoryItem shape
+function fromApiRow(row: MemoryApiRow): MemoryItem {
+  return { ...row, pinned: row.pinned === 1 };
+}
+
+// Sort memories: pinned notes first, then newest-first within each group.
+// Called after every state update so the list stays consistent without refetch.
+function sortMemories(list: MemoryItem[]): MemoryItem[] {
+  return [...list].sort((a, b) => {
+    if (a.pinned !== b.pinned) return b.pinned ? 1 : -1; // pinned first
+    return a.created_at < b.created_at ? 1 : -1;          // newest first
+  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -145,9 +163,11 @@ export default function MemoryPanel({
     setLoadError(false);
     fetch(`${API_URL}/memory`)
       .then((r) => r.json())
-      .then((d: { ok: boolean; memories?: MemoryItem[] }) => {
+      .then((d: { ok: boolean; memories?: MemoryApiRow[] }) => {
         if (d.ok && Array.isArray(d.memories)) {
-          setMemories(d.memories);
+          // Convert pinned 0/1 → boolean and apply sort (server also sorts, but
+          // we re-sort locally for consistency after subsequent state updates)
+          setMemories(sortMemories(d.memories.map(fromApiRow)));
         } else {
           setLoadError(true);
         }
@@ -187,13 +207,13 @@ export default function MemoryPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: formType, title, content }),
       });
-      const data = (await res.json()) as { ok: boolean; memory?: MemoryItem; error?: string };
+      const data = (await res.json()) as { ok: boolean; memory?: MemoryApiRow; error?: string };
       if (!data.ok || !data.memory) {
         setAddError(data.error ?? "Failed to save memory.");
         return;
       }
-      // Prepend new memory to the top of the list (newest first)
-      setMemories((prev) => [data.memory!, ...prev]);
+      // New notes are unpinned — insert and re-sort so they appear after pinned notes
+      setMemories((prev) => sortMemories([fromApiRow(data.memory!), ...prev]));
       // Log activity — title only, never content
       onActivity?.(`Memory added: ${title}`, "info");
       // Reset form
@@ -274,7 +294,7 @@ export default function MemoryPanel({
       });
       const data = (await res.json()) as {
         ok: boolean;
-        memory?: MemoryItem;
+        memory?: MemoryApiRow;
         error?: string;
       };
 
@@ -283,9 +303,9 @@ export default function MemoryPanel({
         return;
       }
 
-      // Update the memory in the local list
+      // Update the memory in the local list; re-sort to preserve pinned ordering
       setMemories((prev) =>
-        prev.map((m) => (m.id === id ? data.memory! : m))
+        sortMemories(prev.map((m) => (m.id === id ? fromApiRow(data.memory!) : m)))
       );
 
       // Notify page.tsx so it can update selectedMemoryContext if this note
@@ -307,6 +327,45 @@ export default function MemoryPanel({
       setEditError("Could not reach the Jarvis API.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ── Pin / favorite memory ────────────────────────────────────────────────────
+  // Pinned is a manual organisation flag — it does NOT automatically include
+  // the note in chat context.  "In this chat" remains a separate explicit opt-in.
+  async function handlePinToggle(item: MemoryItem): Promise<void> {
+    const newPinned = !item.pinned;
+    try {
+      const res = await fetch(`${API_URL}/memory/${item.id}/pinned`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned: newPinned }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        memory?: MemoryApiRow;
+        error?: string;
+      };
+      if (!data.ok || !data.memory) {
+        // Non-fatal — just log a warning; no inline error needed for pin toggle
+        console.warn("Pin toggle failed:", data.error);
+        return;
+      }
+      // Update local state and re-sort so pinned items bubble to the top
+      setMemories((prev) =>
+        sortMemories(
+          prev.map((m) => (m.id === item.id ? fromApiRow(data.memory!) : m))
+        )
+      );
+      // Log pin/unpin event — title only, never content
+      onActivity?.(
+        newPinned
+          ? `Memory pinned: ${item.title}`
+          : `Memory unpinned: ${item.title}`,
+        "info"
+      );
+    } catch {
+      console.warn("Pin toggle: could not reach Jarvis API");
     }
   }
 
@@ -609,10 +668,12 @@ export default function MemoryPanel({
               return (
                 <div
                   key={item.id}
-                  className={`rounded-lg border bg-slate-800/30 p-4 transition-colors ${
+                  className={`rounded-lg border p-4 transition-colors ${
                     isEditing
                       ? "border-cyan-500/30 bg-slate-800/50"
-                      : "border-slate-700/60"
+                      : item.pinned
+                      ? "border-amber-500/30 bg-amber-500/5"
+                      : "border-slate-700/60 bg-slate-800/30"
                   }`}
                 >
                   {isEditing ? (
@@ -703,6 +764,22 @@ export default function MemoryPanel({
                           </span>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
+                          {/* Pin / favorite toggle — organisation only, NOT auto-included in chat */}
+                          <button
+                            onClick={() => void handlePinToggle(item)}
+                            className={`text-xs transition-colors ${
+                              item.pinned
+                                ? "text-amber-400 hover:text-amber-300"
+                                : "text-slate-600 hover:text-amber-400"
+                            }`}
+                            title={
+                              item.pinned
+                                ? "Unpin this memory"
+                                : "Pin this memory (does not add to chat)"
+                            }
+                          >
+                            {item.pinned ? "★ Pinned" : "☆ Pin"}
+                          </button>
                           {/* Include in this chat's context toggle */}
                           <button
                             onClick={() =>

@@ -51,6 +51,23 @@ db.exec(`
     ON memories(type);
 `);
 
+// ── Schema migrations ─────────────────────────────────────────────────────────
+//
+// SQLite does not support "ADD COLUMN IF NOT EXISTS" before 3.35.0, so we
+// attempt the ALTER and swallow the "duplicate column name" error that SQLite
+// throws when the column already exists.  Any other error is re-thrown.
+
+// v1.1.2: add pinned column — 0 = unpinned, 1 = pinned (user-set, not auto)
+try {
+  db.exec(
+    "ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+  );
+} catch (e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!msg.includes("duplicate column name")) throw e;
+  // Column already exists — expected on every startup after the first migration
+}
+
 console.log(`[Jarvis] Database ready at ${config.dbPath}`);
 
 export default db;

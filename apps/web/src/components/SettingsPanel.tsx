@@ -420,6 +420,9 @@ export default function SettingsPanel({
           <SettingRow label="Search and type filter">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
+          <SettingRow label="Pinned memories">
+            <Badge variant="enabled" label="enabled" />
+          </SettingRow>
           <SettingRow label="Manual context (opt-in)">
             <Badge variant="enabled" label="enabled" />
           </SettingRow>
@@ -559,6 +562,9 @@ export default function SettingsPanel({
           <SettingRow label="Memory type filter and improved search">
             <Badge variant="done" />
           </SettingRow>
+          <SettingRow label="Pin/favorite memories">
+            <Badge variant="done" />
+          </SettingRow>
 
           {/* Planned */}
           <SettingRow label="Smart Home / Home Assistant">
@@ -583,7 +589,7 @@ export default function SettingsPanel({
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "1.1.1"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "1.1.2"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>
