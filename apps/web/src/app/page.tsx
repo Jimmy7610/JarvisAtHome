@@ -737,7 +737,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.1.3 — memory export/import
+          v1.1.4 — memory cleanup
         </div>
       </aside>
 

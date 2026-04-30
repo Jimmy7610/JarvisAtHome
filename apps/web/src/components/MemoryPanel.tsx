@@ -41,6 +41,75 @@ type ExportPayload = {
   memories: ExportMemoryEntry[];
 };
 
+// ── Duplicate detection ───────────────────────────────────────────────────────
+//
+// Pure, deterministic helpers — no backend call, no state mutation.
+// The model/AI has no path to these functions.
+
+// Normalise a string for comparison: trim, lowercase, collapse whitespace,
+// collapse repeated identical punctuation (e.g. "!!" → "!").
+function normalizeText(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/([!?,;:.])\1+/g, "$1");
+}
+
+// Truncate to a compact preview for the duplicate panel rows.
+function contentPreview(s: string, maxLen = 80): string {
+  const t = s.trim();
+  return t.length > maxLen ? t.slice(0, maxLen) + "…" : t;
+}
+
+type DuplicateGroupKind = "exact" | "title-match";
+
+type DuplicateGroup = {
+  // "exact"       — same type + normalised title + normalised content (2+ members)
+  // "title-match" — same type + normalised title, but at least two distinct
+  //                 normalised content values (2+ members)
+  kind: DuplicateGroupKind;
+  members: MemoryItem[];
+};
+
+// Analyse the full memory list and return all duplicate groups.
+// Two passes — exact duplicates first, then same-title candidates.
+// A note may appear in both if it has exact duplicate(s) AND shares a title
+// with another note that has different content.
+function findDuplicateGroups(list: MemoryItem[]): DuplicateGroup[] {
+  const groups: DuplicateGroup[] = [];
+
+  // Pass A — exact duplicates: same type + normalised title + normalised content
+  const exactMap = new Map<string, MemoryItem[]>();
+  for (const m of list) {
+    const key = `${m.type}|${normalizeText(m.title)}|${normalizeText(m.content)}`;
+    if (!exactMap.has(key)) exactMap.set(key, []);
+    exactMap.get(key)!.push(m);
+  }
+  for (const [, members] of exactMap) {
+    if (members.length > 1) groups.push({ kind: "exact", members });
+  }
+
+  // Pass B — same-title candidates: same type + normalised title, ≥ 2 distinct
+  // normalised content values.  If all content is identical the group is already
+  // captured as "exact" above, so we skip it here.
+  const titleMap = new Map<string, MemoryItem[]>();
+  for (const m of list) {
+    const key = `${m.type}|${normalizeText(m.title)}`;
+    if (!titleMap.has(key)) titleMap.set(key, []);
+    titleMap.get(key)!.push(m);
+  }
+  for (const [, members] of titleMap) {
+    if (members.length < 2) continue;
+    const uniqueContents = new Set(members.map((m) => normalizeText(m.content)));
+    if (uniqueContents.size > 1) {
+      groups.push({ kind: "title-match", members });
+    }
+  }
+
+  return groups;
+}
+
 // Convert an API row to the frontend MemoryItem shape
 function fromApiRow(row: MemoryApiRow): MemoryItem {
   return { ...row, pinned: row.pinned === 1 };
@@ -203,6 +272,14 @@ export default function MemoryPanel({
 
   // Import error — set on parse failure or API error; cleared on next file select.
   const [importError, setImportError] = useState<string | null>(null);
+
+  // ── Duplicate detection state ─────────────────────────────────────────────────
+  // dupPanelOpen — whether the duplicate results panel is visible.
+  // dupGroups    — the result of the last findDuplicateGroups() call.
+  // Both reset when memories reload (e.g. after import) is NOT done
+  // intentionally — the user re-runs "Find duplicates" to refresh.
+  const [dupPanelOpen, setDupPanelOpen] = useState(false);
+  const [dupGroups, setDupGroups] = useState<DuplicateGroup[]>([]);
 
   // Reset all import state and clear the file input value so the same file can be
   // re-selected after a cancel or result dismiss.
@@ -544,6 +621,21 @@ export default function MemoryPanel({
     }
   }
 
+  // ── Find duplicates ───────────────────────────────────────────────────────────
+  // Runs the duplicate detection analysis over the current full memory list
+  // (not the filtered/searched view) and opens the results panel.
+  // Pure frontend computation — no backend call, no memory records modified.
+  // Only the group count is logged to the Activity Log; no titles or content.
+  function handleFindDuplicates(): void {
+    const groups = findDuplicateGroups(memories);
+    setDupGroups(groups);
+    setDupPanelOpen(true);
+    onActivity?.(
+      `Memory duplicate check: ${groups.length} group${groups.length !== 1 ? "s" : ""} found`,
+      "info"
+    );
+  }
+
   // ── Pin / favorite memory ────────────────────────────────────────────────────
   // Pinned is a manual organisation flag — it does NOT automatically include
   // the note in chat context.  "In this chat" remains a separate explicit opt-in.
@@ -670,6 +762,19 @@ export default function MemoryPanel({
               >
                 Import
               </button>
+              {/* Find duplicates — frontend-only analysis, nothing is changed automatically */}
+              <button
+                onClick={handleFindDuplicates}
+                disabled={memories.length < 2}
+                className={`text-xs px-2.5 py-1 rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  dupPanelOpen
+                    ? "border-slate-600 text-slate-300 bg-slate-700/30"
+                    : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300"
+                }`}
+                title="Analyse memories for likely duplicates — nothing is changed automatically"
+              >
+                Find duplicates
+              </button>
               {/* Hidden file input — triggered programmatically by the Import button */}
               <input
                 ref={fileInputRef}
@@ -774,6 +879,85 @@ export default function MemoryPanel({
             >
               Dismiss
             </button>
+          </div>
+        )}
+
+        {/* ── Duplicate detection panel ────────────────────────────────────── */}
+        {dupPanelOpen && (
+          <div className="rounded-lg border border-slate-700/60 bg-slate-800/30 p-4 space-y-3">
+            {/* Panel header */}
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                Duplicate check
+                {dupGroups.length > 0 && (
+                  <span className="ml-2 font-normal normal-case tracking-normal text-slate-600">
+                    — {dupGroups.length} group{dupGroups.length !== 1 ? "s" : ""} found
+                  </span>
+                )}
+              </p>
+              <button
+                onClick={() => setDupPanelOpen(false)}
+                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+              >
+                Close
+              </button>
+            </div>
+
+            {/* Safety notice — always visible */}
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Suggestions only — nothing is changed automatically. Click any row
+              to search for that note below, then use{" "}
+              <span className="text-slate-500">Edit</span> or{" "}
+              <span className="text-slate-500">Delete</span> on the memory cards
+              to clean up manually.
+            </p>
+
+            {dupGroups.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-2">
+                No likely duplicates found.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {dupGroups.map((group, gi) => (
+                  <div key={gi} className="space-y-1.5">
+                    {/* Group kind label */}
+                    <p className="text-xs font-medium text-slate-500">
+                      {group.kind === "exact"
+                        ? `Exact duplicate — ${group.members.length} notes with identical type, title, and content`
+                        : `Same title — ${group.members.length} notes with the same type and title but different content`}
+                    </p>
+                    {/* Member rows — click to jump to the note in the list */}
+                    {group.members.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          // Set search query to the title and close the panel
+                          // so the user can see and act on the matching notes.
+                          setSearchQuery(m.title);
+                          setDupPanelOpen(false);
+                        }}
+                        title="Click to search for this memory in the list below"
+                        className="w-full text-left rounded border border-slate-700/40 bg-slate-800/20 px-3 py-2 hover:border-slate-600/60 hover:bg-slate-800/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <TypeBadge type={m.type} />
+                          <span className="text-xs font-medium text-slate-300 truncate">
+                            {m.title}
+                          </span>
+                        </div>
+                        {/* Show content preview only for title-match groups —
+                            exact groups all have identical content so it adds no information */}
+                        {group.kind === "title-match" && (
+                          <p className="text-xs text-slate-600 truncate pl-0.5">
+                            {contentPreview(m.content)}
+                          </p>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
