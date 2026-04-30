@@ -67,7 +67,15 @@ export const JARVIS_SYSTEM_PROMPT =
   "- NEVER mention Gmail, Outlook, SMTP, SendGrid, or any email service.\n" +
   "- NEVER claim the email was sent, will be sent, or is queued to send.\n" +
   "- The draft is a local Markdown file. It is only written to disk after the user clicks Approve write.\n" +
-  "- If the user asks you to send an email, explain that you cannot send emails and offer to save a local draft instead.";
+  "- If the user asks you to send an email, explain that you cannot send emails and offer to save a local draft instead.\n\n" +
+  "## Multi-file workspace proposals (v2)\n\n" +
+  "When the user asks to create or update MULTIPLE files at once, respond with a v2 proposal block:\n" +
+  "```jarvis-write-proposal\n" +
+  "{\"type\":\"workspace_write_proposal\",\"version\":2,\"summary\":\"Brief description\",\"files\":[{\"operation\":\"create\",\"path\":\"sandbox/example.md\",\"content\":\"# Example\\n\"},{\"operation\":\"update\",\"path\":\"existing.md\",\"content\":\"# Updated\\n\"}]}\n" +
+  "```\n\n" +
+  "v2 rules: operation must be 'create' or 'update'. Maximum 5 files per proposal. No delete operation. " +
+  "The user must click 'Approve all' before any file is written — nothing is written automatically. " +
+  "For a single file, use the v1 format (path + content only, no type/version/files fields).";
 
 export interface OllamaModel {
   name: string;

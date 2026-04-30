@@ -807,6 +807,11 @@ export default function ChatPanel({
   // Set when the clipboard write fails — shown inline so the user can react.
   const [chatCopyError, setChatCopyError] = useState<string | null>(null);
 
+  // ── Multi-file template helper state ──────────────────────────────────────
+  // true for 2 s after the user clicks "Copy multi-file template" — shows a
+  // "✓ Template copied" label in place of the button text.
+  const [templateCopied, setTemplateCopied] = useState(false);
+
   // ── Multi-file proposal state (v2 format) ─────────────────────────────────
   // Set when the assistant proposes multiple files in a single response block.
   // Each entry mirrors the single-file chatProposal shape.
@@ -1423,6 +1428,64 @@ export default function ChatPanel({
       setTimeout(() => setChatCopied(false), 2000);
     } catch {
       setChatCopyError("Could not copy — try opening the draft and copying manually.");
+    }
+  }
+
+  // Copy the v2 multi-file write proposal template to the clipboard.
+  // If the clipboard API is unavailable (non-HTTPS or permission denied), inserts
+  // the template directly into the chat input as a fallback — the user can then
+  // edit paths/content and click Send to trigger the local interception flow.
+  // Does NOT send the template automatically.
+  async function handleCopyMultiFileTemplate(): Promise<void> {
+    // Build the template using JSON.stringify for correct JSON escaping.
+    // Path examples use safe workspace-relative paths — no traversal, no absolute paths.
+    const template =
+      "```jarvis-write-proposal\n" +
+      JSON.stringify(
+        {
+          type: "workspace_write_proposal",
+          version: 2,
+          summary: "Describe the intended changes",
+          files: [
+            {
+              operation: "create",
+              path: "sandbox/example-1.md",
+              content: "# Example 1\n",
+            },
+            {
+              operation: "update",
+              path: "welcome.md",
+              content: "# Updated welcome\n",
+            },
+          ],
+        },
+        null,
+        2
+      ) +
+      "\n```";
+
+    try {
+      await navigator.clipboard.writeText(template);
+      setTemplateCopied(true);
+      onActivity?.("Multi-file proposal template copied to clipboard", "info");
+      // Auto-reset the label after 2 seconds
+      setTimeout(() => setTemplateCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable (non-HTTPS or browser restriction) —
+      // insert the template into the chat input so the user can still use it.
+      setInput(template);
+      // Trigger textarea auto-resize to show the full pasted content
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+        textareaRef.current.style.height = `${Math.min(
+          textareaRef.current.scrollHeight,
+          200
+        )}px`;
+      }
+      onActivity?.(
+        "Multi-file proposal template inserted into input (clipboard unavailable)",
+        "info"
+      );
     }
   }
 
@@ -2607,6 +2670,22 @@ export default function ChatPanel({
           <p className="text-xs text-slate-700">
             Enter to send · Shift+Enter for new line
           </p>
+          {/* Multi-file proposal template helper (v1.2.1).
+              Copies the v2 jarvis-write-proposal template to clipboard.
+              Fallback: inserts into input if clipboard is unavailable.
+              Does not send automatically — approval is always required. */}
+          <button
+            type="button"
+            onClick={() => void handleCopyMultiFileTemplate()}
+            title="Copy a v2 multi-file write proposal template to clipboard. Paste into chat and edit paths/content, then Send."
+            className={`text-xs transition-colors ${
+              templateCopied
+                ? "text-green-500/80"
+                : "text-slate-700 hover:text-slate-400"
+            }`}
+          >
+            {templateCopied ? "✓ Template copied" : "Copy multi-file template"}
+          </button>
         </div>
 
         {/* Voice bar — only shown when the browser supports at least one voice API.
