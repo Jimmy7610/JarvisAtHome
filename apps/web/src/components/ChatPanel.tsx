@@ -883,6 +883,11 @@ export default function ChatPanel({
   const [chatMultiSummary, setChatMultiSummary] = useState<string | null>(null);
   // true while sequential approve-all is in progress (prevents double-click).
   const [chatApproveAllLoading, setChatApproveAllLoading] = useState(false);
+  // Set of proposal IDs the user has included for writing.
+  // Initialised to ALL file IDs when a new multi-file proposal arrives so that the default
+  // state is "everything included".  Toggled per file by the Include/Skip button.
+  // Cleared on cancel, on new send, and after successful approve.
+  const [selectedMultiProposalIds, setSelectedMultiProposalIds] = useState<Set<string>>(new Set());
 
   // ── Voice input state (Web Speech API) ───────────────────────────────────
   // Whether the browser supports SpeechRecognition — set after mount to avoid SSR mismatch.
@@ -1265,6 +1270,9 @@ export default function ChatPanel({
       }
 
       setChatMultiProposals(proposals);
+      // Initialise selection to every file — all files are included by default.
+      // The user can toggle individual files to Skip before clicking Approve.
+      setSelectedMultiProposalIds(new Set(proposals.map((p) => p.id)));
       setChatMultiSummary(summary);
       onActivity?.(
         `Chat write proposal: ${fileCount} file${fileCount !== 1 ? "s" : ""} pending approval`,
@@ -1343,17 +1351,22 @@ export default function ChatPanel({
     }
   }
 
-  // Sequential approve-all for v2 multi-file proposals.
-  // Calls POST /files/approve-write for each pending proposal in order.
-  // Stops on the first failure and reports which file failed.
+  // Sequential approve for v2 multi-file proposals — writes only the files the user
+  // has included (i.e. whose IDs are in selectedMultiProposalIds).
+  // Skipped files are ignored; they are never passed to /files/approve-write.
+  // Stops on the first failure so the user never ends up in a half-written state.
   async function handleApproveAll(): Promise<void> {
     if (!chatMultiProposals) return;
-    const proposals = chatMultiProposals;
+    const allProposals = chatMultiProposals;
+    // Filter to the user's selected subset — safety guard in addition to the disabled button.
+    const selectedProposals = allProposals.filter((p) => selectedMultiProposalIds.has(p.id));
+    if (selectedProposals.length === 0) return;
+
     setChatApproveAllLoading(true);
     setChatApproveError(null);
 
     try {
-      for (const proposal of proposals) {
+      for (const proposal of selectedProposals) {
         const res = await fetch(`${API_URL}/files/approve-write`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1379,13 +1392,17 @@ export default function ChatPanel({
           "write"
         );
       }
-      // All files approved successfully
+      // All selected files approved successfully
+      const skippedCount = allProposals.length - selectedProposals.length;
       onActivity?.(
-        `Chat write approved: ${proposals.length} file${proposals.length !== 1 ? "s" : ""} written`,
+        skippedCount > 0
+          ? `Chat write approved: ${selectedProposals.length} of ${allProposals.length} files written (${skippedCount} skipped)`
+          : `Chat write approved: ${selectedProposals.length} file${selectedProposals.length !== 1 ? "s" : ""} written`,
         "write"
       );
       setChatMultiProposals(null);
       setChatMultiSummary(null);
+      setSelectedMultiProposalIds(new Set());
       setChatWriteSuccess(true);
       // Multi-file success uses null path — the generic success message shows instead of the draft UI.
       setChatApprovedPath(null);
@@ -1455,6 +1472,7 @@ export default function ChatPanel({
     setChatProposal(null);
     setChatMultiProposals(null);
     setChatMultiSummary(null);
+    setSelectedMultiProposalIds(new Set());
     setChatProposalError(null);
     setChatApproveError(null);
     if (cancelledPath) {
@@ -1848,6 +1866,7 @@ export default function ChatPanel({
     setChatProposal(null);
     setChatMultiProposals(null);
     setChatMultiSummary(null);
+    setSelectedMultiProposalIds(new Set());
     setChatProposalError(null);
     setChatApproveError(null);
     setChatWriteSuccess(false);
@@ -2330,6 +2349,7 @@ export default function ChatPanel({
                   setChatProposal(null);
                   setChatMultiProposals(null);
                   setChatMultiSummary(null);
+                  setSelectedMultiProposalIds(new Set());
                   setChatProposalError(null);
                   setChatApproveError(null);
                   setChatWriteSuccess(false);
@@ -2496,131 +2516,187 @@ export default function ChatPanel({
           )}
 
           {/* ── Multi-file proposal section (v2 format) ──────────────────────── */}
-          {chatMultiProposals && (
-            <>
-              {/* Validation summary — stats + warnings */}
-              <div className="px-6 pb-1">
-                {/* Optional human-readable summary from the proposal JSON */}
-                {chatMultiSummary && (
-                  <p className="text-xs text-amber-600/80 italic mb-1">
-                    {chatMultiSummary}
-                  </p>
-                )}
+          {chatMultiProposals && (() => {
+            // Derive selection counts once so JSX expressions stay readable.
+            const totalFiles = chatMultiProposals.length;
+            const selectedProposals = chatMultiProposals.filter((p) => selectedMultiProposalIds.has(p.id));
+            const selectedCount = selectedProposals.length;
+            const skippedCount = totalFiles - selectedCount;
+            const allSkipped = selectedCount === 0;
+            // Stats computed over the selected subset for accuracy.
+            const selectedCreateCount = selectedProposals.filter((p) => p.operation === "create").length;
+            const selectedUpdateCount = selectedProposals.filter((p) => p.operation === "edit").length;
+            const selectedTotalBytes = selectedProposals.reduce((sum, p) => sum + p.content.length, 0);
+            // Warnings computed over selected files only — skipped files are irrelevant.
+            const warnings = computeMultiProposalWarnings(selectedProposals);
 
-                {/* Compact stats row: file count · create count · update count · total size */}
-                <p className="text-xs text-amber-700">
-                  {chatMultiProposals.length} file{chatMultiProposals.length !== 1 ? "s" : ""}
-                  {" · "}
-                  {chatMultiProposals.filter((p) => p.operation === "create").length} create
-                  {" · "}
-                  {chatMultiProposals.filter((p) => p.operation === "edit").length} update
-                  {" · "}
-                  {formatContentSize(
-                    chatMultiProposals.reduce((sum, p) => sum + p.content.length, 0)
-                  )}{" "}total
-                </p>
+            return (
+              <>
+                {/* Validation summary — stats + warnings */}
+                <div className="px-6 pb-1">
+                  {/* Optional human-readable summary from the proposal JSON */}
+                  {chatMultiSummary && (
+                    <p className="text-xs text-amber-600/80 italic mb-1">
+                      {chatMultiSummary}
+                    </p>
+                  )}
 
-                {/* Advisory warnings — non-blocking; backend remains the source of truth */}
-                {computeMultiProposalWarnings(chatMultiProposals).map((w) => (
-                  <p key={w.key} className="mt-1 text-xs text-amber-500/80">
-                    ⚠ {w.message}
-                  </p>
-                ))}
-              </div>
-
-              {/* Per-file diff sections */}
-              {chatMultiProposals.map((proposal, idx) => (
-                <div key={proposal.id} className="mx-6 mb-2">
-                  {/* File header — path · operation badge · content size · counter */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-slate-700/60 rounded-t">
-                    <span className="text-amber-500/80 font-mono text-xs truncate flex-1">
-                      workspace/{proposal.path}
+                  {/* Compact stats row — reflects selection state */}
+                  <p className="text-xs text-amber-700">
+                    {totalFiles} file{totalFiles !== 1 ? "s" : ""}
+                    {" · "}
+                    <span className={selectedCount > 0 ? "text-green-500/80" : "text-slate-600"}>
+                      {selectedCount} selected
                     </span>
-                    {/* Operation badge: green "new file" for create, muted "update" for edit */}
-                    {proposal.operation === "create" ? (
-                      <span className="text-xs px-1.5 py-px rounded bg-green-900/30 text-green-400 border border-green-600/30 font-medium flex-shrink-0">
-                        new file
-                      </span>
-                    ) : (
-                      <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium flex-shrink-0">
-                        update
-                      </span>
+                    {skippedCount > 0 && (
+                      <> · <span className="text-slate-600">{skippedCount} skipped</span></>
                     )}
-                    {/* Content size (character count; valid for ASCII workspace files) */}
-                    <span className="text-xs text-slate-600 flex-shrink-0 select-none font-mono">
-                      {formatContentSize(proposal.content.length)}
-                    </span>
-                    {/* File counter */}
-                    <span className="text-xs text-slate-700 flex-shrink-0 select-none">
-                      {idx + 1}/{chatMultiProposals.length}
-                    </span>
-                  </div>
-                  {/* Scrollable diff body */}
-                  <div
-                    className="overflow-y-auto border border-t-0 border-slate-700/60 rounded-b"
-                    style={{ maxHeight: "140px" }}
-                  >
-                    {getDisplayLines(proposal.diff).map((line, i) => {
-                      if (line.type === "gap") {
-                        return (
-                          <div
-                            key={i}
-                            className="pl-2 pr-3 py-0.5 text-xs text-slate-600 bg-slate-800/40 text-center select-none border-l-2 border-transparent"
-                          >
-                            ···&nbsp;&nbsp;{line.count} unchanged line{line.count !== 1 ? "s" : ""}
-                          </div>
-                        );
-                      }
-                      const rowClass =
-                        line.type === "added"
-                          ? "bg-green-900/25 border-l-2 border-green-600 text-green-300"
-                          : line.type === "removed"
-                          ? "bg-red-900/20 border-l-2 border-red-700 text-red-300"
-                          : "border-l-2 border-transparent text-slate-400";
-                      const prefix =
-                        line.type === "added" ? "+" : line.type === "removed" ? "−" : " ";
-                      return (
-                        <div
-                          key={i}
-                          className={`flex gap-2 pl-2 pr-3 py-0.5 font-mono text-xs leading-relaxed ${rowClass}`}
-                        >
-                          <span className="flex-shrink-0 select-none w-3">{prefix}</span>
-                          <span className="whitespace-pre-wrap break-all">{line.content}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-
-              {/* Approve all / Cancel */}
-              <div className="px-6 pb-3 space-y-1.5">
-                {chatApproveError && (
-                  <p className="text-xs text-red-500/70 text-center">
-                    {chatApproveError}
+                    {selectedCount > 0 && (
+                      <>
+                        {" · "}{selectedCreateCount} create
+                        {" · "}{selectedUpdateCount} update
+                        {" · "}{formatContentSize(selectedTotalBytes)}{" "}selected
+                      </>
+                    )}
                   </p>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => void handleApproveAll()}
-                    disabled={chatApproveAllLoading}
-                    className="flex-1 text-xs py-1.5 rounded bg-green-900/20 text-green-400 border border-green-500/20 hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {chatApproveAllLoading
-                      ? "Writing…"
-                      : `Approve all ${chatMultiProposals.length} file${chatMultiProposals.length !== 1 ? "s" : ""}`}
-                  </button>
-                  <button
-                    onClick={handleChatCancelProposal}
-                    disabled={chatApproveAllLoading}
-                    className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Cancel
-                  </button>
+
+                  {/* Advisory warnings — non-blocking; backend remains the source of truth */}
+                  {warnings.map((w) => (
+                    <p key={w.key} className="mt-1 text-xs text-amber-500/80">
+                      ⚠ {w.message}
+                    </p>
+                  ))}
                 </div>
-              </div>
-            </>
-          )}
+
+                {/* Per-file diff sections */}
+                {chatMultiProposals.map((proposal, idx) => {
+                  const isSelected = selectedMultiProposalIds.has(proposal.id);
+                  return (
+                    <div
+                      key={proposal.id}
+                      className={`mx-6 mb-2 transition-opacity ${isSelected ? "opacity-100" : "opacity-40"}`}
+                    >
+                      {/* File header — include/skip toggle · path · operation badge · size · counter */}
+                      <div className={`flex items-center gap-2 px-3 py-1.5 border border-slate-700/60 rounded-t ${isSelected ? "bg-slate-800" : "bg-slate-800/50"}`}>
+                        {/* Include / Skip toggle — flips this file in/out of the selection */}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedMultiProposalIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(proposal.id)) {
+                                next.delete(proposal.id);
+                              } else {
+                                next.add(proposal.id);
+                              }
+                              return next;
+                            })
+                          }
+                          title={isSelected ? "Click to skip this file" : "Click to include this file"}
+                          className={`text-xs px-1.5 py-px rounded border font-medium flex-shrink-0 transition-colors ${
+                            isSelected
+                              ? "bg-green-900/20 text-green-400 border-green-600/30 hover:bg-red-900/20 hover:text-red-400 hover:border-red-600/30"
+                              : "bg-slate-700/40 text-slate-500 border-slate-600/30 hover:bg-green-900/20 hover:text-green-400 hover:border-green-600/30"
+                          }`}
+                        >
+                          {isSelected ? "✓ Include" : "Skip"}
+                        </button>
+                        <span className="text-amber-500/80 font-mono text-xs truncate flex-1">
+                          workspace/{proposal.path}
+                        </span>
+                        {/* Operation badge: green "new file" for create, muted "update" for edit */}
+                        {proposal.operation === "create" ? (
+                          <span className="text-xs px-1.5 py-px rounded bg-green-900/30 text-green-400 border border-green-600/30 font-medium flex-shrink-0">
+                            new file
+                          </span>
+                        ) : (
+                          <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-400 border border-slate-600/40 font-medium flex-shrink-0">
+                            update
+                          </span>
+                        )}
+                        {/* Content size (character count; valid for ASCII workspace files) */}
+                        <span className="text-xs text-slate-600 flex-shrink-0 select-none font-mono">
+                          {formatContentSize(proposal.content.length)}
+                        </span>
+                        {/* File counter */}
+                        <span className="text-xs text-slate-700 flex-shrink-0 select-none">
+                          {idx + 1}/{totalFiles}
+                        </span>
+                      </div>
+                      {/* Scrollable diff body */}
+                      <div
+                        className="overflow-y-auto border border-t-0 border-slate-700/60 rounded-b"
+                        style={{ maxHeight: "140px" }}
+                      >
+                        {getDisplayLines(proposal.diff).map((line, i) => {
+                          if (line.type === "gap") {
+                            return (
+                              <div
+                                key={i}
+                                className="pl-2 pr-3 py-0.5 text-xs text-slate-600 bg-slate-800/40 text-center select-none border-l-2 border-transparent"
+                              >
+                                ···&nbsp;&nbsp;{line.count} unchanged line{line.count !== 1 ? "s" : ""}
+                              </div>
+                            );
+                          }
+                          const rowClass =
+                            line.type === "added"
+                              ? "bg-green-900/25 border-l-2 border-green-600 text-green-300"
+                              : line.type === "removed"
+                              ? "bg-red-900/20 border-l-2 border-red-700 text-red-300"
+                              : "border-l-2 border-transparent text-slate-400";
+                          const prefix =
+                            line.type === "added" ? "+" : line.type === "removed" ? "−" : " ";
+                          return (
+                            <div
+                              key={i}
+                              className={`flex gap-2 pl-2 pr-3 py-0.5 font-mono text-xs leading-relaxed ${rowClass}`}
+                            >
+                              <span className="flex-shrink-0 select-none w-3">{prefix}</span>
+                              <span className="whitespace-pre-wrap break-all">{line.content}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Approve selected / Cancel */}
+                <div className="px-6 pb-3 space-y-1.5">
+                  {/* All-skipped warning — shown instead of the approve button being dimly disabled */}
+                  {allSkipped && (
+                    <p className="text-xs text-amber-500/80 text-center">
+                      No files selected. Toggle at least one file to Include before approving.
+                    </p>
+                  )}
+                  {chatApproveError && (
+                    <p className="text-xs text-red-500/70 text-center">
+                      {chatApproveError}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => void handleApproveAll()}
+                      disabled={chatApproveAllLoading || allSkipped}
+                      className="flex-1 text-xs py-1.5 rounded bg-green-900/20 text-green-400 border border-green-500/20 hover:bg-green-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {chatApproveAllLoading
+                        ? "Writing…"
+                        : `Approve selected ${selectedCount} file${selectedCount !== 1 ? "s" : ""}`}
+                    </button>
+                    <button
+                      onClick={handleChatCancelProposal}
+                      disabled={chatApproveAllLoading}
+                      className="flex-1 text-xs py-1.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 hover:text-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
