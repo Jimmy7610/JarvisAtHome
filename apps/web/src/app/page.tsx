@@ -33,6 +33,10 @@ const OLLAMA_MODEL_KEY = "jarvis:selected-ollama-model";
 // Only UUIDs are stored — full memory content always stays in SQLite only.
 // Each chat session has its own independent memory selection.
 const MEMORY_CONTEXT_BY_SESSION_KEY = "jarvis:memory-context-by-session";
+// localStorage key for the per-session agent plan map.
+// Shape: { "<sessionId>": AgentPlanState }
+// Plans are browser-only; not sent to the backend.
+const AGENT_PLAN_BY_SESSION_KEY = "jarvis:agent-plan-by-session";
 
 // ── localStorage helpers for per-session memory context IDs ──────────────────
 //
@@ -102,6 +106,25 @@ function writeMemoryContextIdsForSession(
 // Clear the saved memory context for one session.
 function clearMemoryContextForSession(sessionId: number): void {
   writeMemoryContextIdsForSession(sessionId, []);
+}
+
+// ── Agent plan cleanup helper ─────────────────────────────────────────────────
+//
+// Removes the persisted agent plan for a specific session from the localStorage
+// map.  Called when a session is deleted so the map does not accumulate entries
+// for sessions that no longer exist.  Mirrors the memory-context cleanup pattern.
+
+function clearAgentPlanForSession(sessionId: number): void {
+  try {
+    const raw = localStorage.getItem(AGENT_PLAN_BY_SESSION_KEY);
+    if (!raw) return;
+    const map = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof map !== "object" || map === null) return;
+    delete map[String(sessionId)];
+    localStorage.setItem(AGENT_PLAN_BY_SESSION_KEY, JSON.stringify(map));
+  } catch {
+    // Storage unavailable or corrupted — not fatal
+  }
 }
 
 // Remove a specific memory ID from every session's saved selection.
@@ -615,10 +638,11 @@ export default function DashboardPage() {
       return;
     }
 
-    // Clean up the deleted session's memory context from localStorage.
-    // Do this for any deleted session (not just the active one) so the map
-    // does not accumulate entries for sessions that no longer exist.
+    // Clean up the deleted session's memory context and agent plan from localStorage.
+    // Do this for any deleted session (not just the active one) so the maps
+    // do not accumulate entries for sessions that no longer exist.
     clearMemoryContextForSession(id);
+    clearAgentPlanForSession(id);
 
     // If the deleted session was active, create a fresh replacement session
     if (id === activeSessionId) {
@@ -737,7 +761,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.3.0 — agent workflow foundation
+          v1.3.1 — agent plan persistence
         </div>
       </aside>
 

@@ -846,6 +846,64 @@ function saveSessionId(id: number): void {
   }
 }
 
+// ─── Agent plan persistence helpers ──────────────────────────────────────────
+//
+// Plans are persisted per chat session in a single localStorage entry shaped as:
+//   { "<sessionId>": AgentPlanState }
+//
+// This mirrors the pattern used by jarvis:memory-context-by-session.
+// Plans are never sent to the backend — they live only in the browser.
+// The entry is keyed by the numeric session ID converted to a string.
+
+const AGENT_PLAN_BY_SESSION_KEY = "jarvis:agent-plan-by-session";
+
+// Read the entire session → plan map from localStorage.
+function readAgentPlanMap(): Record<string, AgentPlanState> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(AGENT_PLAN_BY_SESSION_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return parsed as Record<string, AgentPlanState>;
+  } catch {
+    return {};
+  }
+}
+
+// Write the entire session → plan map back to localStorage.
+function writeAgentPlanMap(map: Record<string, AgentPlanState>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(AGENT_PLAN_BY_SESSION_KEY, JSON.stringify(map));
+  } catch {
+    // Storage quota exceeded — not fatal
+  }
+}
+
+// Return the persisted plan for a specific session, or null if none exists.
+function readAgentPlanForSession(sessionId: number | null): AgentPlanState | null {
+  if (sessionId === null) return null;
+  const map = readAgentPlanMap();
+  return map[String(sessionId)] ?? null;
+}
+
+// Persist the current plan for a specific session.
+function saveAgentPlanForSession(sessionId: number | null, plan: AgentPlanState): void {
+  if (sessionId === null) return;
+  const map = readAgentPlanMap();
+  map[String(sessionId)] = plan;
+  writeAgentPlanMap(map);
+}
+
+// Remove the persisted plan for a specific session (on clear or session delete).
+function removeAgentPlanForSession(sessionId: number | null): void {
+  if (sessionId === null) return;
+  const map = readAgentPlanMap();
+  delete map[String(sessionId)];
+  writeAgentPlanMap(map);
+}
+
 // Create a new backend session and return its id.
 // Returns null if the backend is unreachable — callers degrade gracefully.
 async function createSession(): Promise<number | null> {
@@ -1131,6 +1189,9 @@ export default function ChatPanel({
     if (existingId !== null) {
       // Session id stored — try to restore from backend first.
       sessionIdRef.current = existingId;
+      // Restore the agent plan for this session from localStorage (if one was saved).
+      const savedPlan = readAgentPlanForSession(existingId);
+      if (savedPlan) setChatAgentPlan(savedPlan);
       loadSessionFromBackend(existingId).then((backendMessages) => {
         if (backendMessages !== null) {
           // Backend has history — use it and sync to localStorage as cache.
@@ -1761,6 +1822,7 @@ export default function ChatPanel({
       return;
     }
     setChatAgentPlan(plan);
+    saveAgentPlanForSession(sessionIdRef.current, plan);
     onActivity?.(
       `Agent plan detected: ${plan.steps.length} step${plan.steps.length !== 1 ? "s" : ""}`,
       "info"
@@ -1768,33 +1830,41 @@ export default function ChatPanel({
   }
 
   // Mark a single step as "done". No other steps are affected.
+  // The updated plan is saved to localStorage so it survives page refresh.
   function handleMarkStepDone(stepId: string): void {
     setChatAgentPlan((prev) => {
       if (!prev) return prev;
-      return {
+      const updated: AgentPlanState = {
         ...prev,
         steps: prev.steps.map((s) =>
-          s.id === stepId ? { ...s, status: "done" } : s
+          s.id === stepId ? { ...s, status: "done" as AgentPlanStepStatus } : s
         ),
       };
+      saveAgentPlanForSession(sessionIdRef.current, updated);
+      return updated;
     });
   }
 
   // Reset a single step to "planned". Used to undo an accidental "done" mark.
+  // The updated plan is saved to localStorage so the change persists.
   function handleResetStep(stepId: string): void {
     setChatAgentPlan((prev) => {
       if (!prev) return prev;
-      return {
+      const updated: AgentPlanState = {
         ...prev,
         steps: prev.steps.map((s) =>
-          s.id === stepId ? { ...s, status: "planned" } : s
+          s.id === stepId ? { ...s, status: "planned" as AgentPlanStepStatus } : s
         ),
       };
+      saveAgentPlanForSession(sessionIdRef.current, updated);
+      return updated;
     });
   }
 
   // Dismiss the entire plan panel. Does not affect write proposals.
+  // Also removes the saved plan from localStorage for the current session.
   function handleClearPlan(): void {
+    removeAgentPlanForSession(sessionIdRef.current);
     setChatAgentPlan(null);
     onActivity?.("Agent plan cleared", "info");
   }
@@ -2099,11 +2169,12 @@ export default function ChatPanel({
 
     // Clear any previous chat-created write proposal so the next response starts fresh.
     // Covers both single-file (chatProposal) and multi-file (chatMultiProposals) state.
+    // Note: chatAgentPlan is NOT cleared here — plans persist across messages within
+    // a session (the user explicitly dismisses them with the × button).
     setChatProposal(null);
     setChatMultiProposals(null);
     setChatMultiSummary(null);
     setSelectedMultiProposalIds(new Set());
-    setChatAgentPlan(null);
     setChatProposalError(null);
     setChatApproveError(null);
     setChatWriteSuccess(false);
@@ -2139,6 +2210,7 @@ export default function ChatPanel({
           }
         }
         setChatAgentPlan(plan);
+        saveAgentPlanForSession(planSid, plan);
         return;
       }
     }
