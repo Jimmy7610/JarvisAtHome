@@ -737,7 +737,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.2.3 — per-file approve/skip
+          v1.3.0 — agent workflow foundation
         </div>
       </aside>
 

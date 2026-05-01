@@ -526,6 +526,182 @@ function computeMultiProposalWarnings(
   return warnings;
 }
 
+// ── Agent plan types and detection (jarvis-agent-plan format) ────────────────
+//
+// An agent plan block lets Jarvis present an ordered, step-by-step plan for
+// multi-step work.  The user reviews the plan and marks steps done manually —
+// NOTHING runs automatically.  If a step requires file writes, a separate
+// jarvis-write-proposal block must be submitted and approved as normal.
+//
+// Block format:
+//   ```jarvis-agent-plan
+//   {"type":"jarvis_agent_plan","version":1,"title":"...","steps":[...]}
+//   ```
+//
+// The bare-JSON fallback also accepts a bare { type: "jarvis_agent_plan" } object
+// when the entire message is a single JSON object (same rule as write proposals).
+
+// Valid step kinds used for badge display.
+type AgentPlanStepKind = "analysis" | "code" | "docs" | "test" | "review";
+
+// Valid step statuses — also the values the model may set in the initial JSON.
+type AgentPlanStepStatus = "planned" | "in_progress" | "done" | "blocked";
+
+// Mutable in-component step shape (status toggled by the user via plan panel).
+interface AgentPlanStep {
+  id: string;
+  title: string;
+  description: string;
+  kind?: AgentPlanStepKind;
+  status: AgentPlanStepStatus;
+}
+
+// Mutable in-component plan shape stored as component state.
+interface AgentPlanState {
+  title: string;
+  summary?: string;
+  steps: AgentPlanStep[];
+}
+
+// Raw JSON shape emitted by the model — read-only, parsed once into AgentPlanState.
+// kind/status are kept as string so the validator can accept or reject unknown values.
+type AgentPlanJson = {
+  type: "jarvis_agent_plan";
+  version: 1;
+  title: string;
+  summary?: string;
+  steps: Array<{
+    id: string;
+    title: string;
+    description: string;
+    kind?: string;
+    status?: string;
+  }>;
+};
+
+// Type guard — confirms the parsed JSON matches the v1 jarvis-agent-plan shape.
+// isAgentPlan is a function declaration so it is hoisted and can be called by
+// the extractor functions that appear later in the source.
+function isAgentPlan(obj: unknown): obj is AgentPlanJson {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  if (o.type !== "jarvis_agent_plan") return false;
+  if (o.version !== 1) return false;
+  if (typeof o.title !== "string" || !o.title.trim()) return false;
+  if (!Array.isArray(o.steps) || (o.steps as unknown[]).length === 0) return false;
+  if ((o.steps as unknown[]).length > 10) return false;
+  for (const step of o.steps as unknown[]) {
+    if (typeof step !== "object" || step === null) return false;
+    const s = step as Record<string, unknown>;
+    if (typeof s.id !== "string" || !s.id.trim()) return false;
+    if (typeof s.title !== "string" || !s.title.trim()) return false;
+    if (typeof s.description !== "string") return false;
+  }
+  return true;
+}
+
+// Parse a validated agent plan JSON string into the mutable AgentPlanState.
+// Normalises optional kind/status fields to known values or safe defaults.
+// Returns null if JSON.parse or the type guard fails.
+function parseAgentPlan(jsonBody: string): AgentPlanState | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(jsonBody); } catch { return null; }
+  if (!isAgentPlan(parsed)) return null;
+
+  const VALID_KINDS = new Set<string>(["analysis", "code", "docs", "test", "review"]);
+  const VALID_STATUSES = new Set<string>(["planned", "in_progress", "done", "blocked"]);
+
+  return {
+    title: parsed.title.trim(),
+    summary:
+      typeof parsed.summary === "string" && parsed.summary.trim()
+        ? parsed.summary.trim()
+        : undefined,
+    steps: parsed.steps.map((s) => {
+      const kind = s.kind && VALID_KINDS.has(s.kind)
+        ? (s.kind as AgentPlanStepKind)
+        : undefined;
+      const status = s.status && VALID_STATUSES.has(s.status)
+        ? (s.status as AgentPlanStepStatus)
+        : "planned";
+      return { id: s.id.trim(), title: s.title.trim(), description: s.description, kind, status };
+    }),
+  };
+}
+
+// Marker used in fenced agent plan blocks.
+const AGENT_PLAN_MARKER = "jarvis-agent-plan";
+
+// Locate the ```jarvis-agent-plan fenced block, extract the first complete JSON
+// object using brace-balancing (same technique as extractWriteProposal), then
+// validate it with isAgentPlan.  Returns the raw JSON string or null.
+function extractAgentPlanFromFence(text: string): string | null {
+  const markerPos = text.indexOf(AGENT_PLAN_MARKER);
+  if (markerPos === -1) return null;
+
+  // Scan forward from the end of the marker to the first {
+  let jsonStart = -1;
+  for (let i = markerPos + AGENT_PLAN_MARKER.length; i < text.length; i++) {
+    if (text[i] === "{") { jsonStart = i; break; }
+  }
+  if (jsonStart === -1) return null;
+
+  // Brace-balance to extract the complete JSON object (handles strings + escapes)
+  let depth = 0;
+  let inString = false;
+  let i = jsonStart;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") { i += 2; continue; }
+      if (ch === '"') inString = false;
+    } else {
+      if (ch === '"') { inString = true; }
+      else if (ch === "{") { depth++; }
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const jsonBody = text.slice(jsonStart, i + 1);
+          let parsed: unknown;
+          try { parsed = JSON.parse(jsonBody); } catch { return null; }
+          return isAgentPlan(parsed) ? jsonBody : null;
+        }
+      }
+    }
+    i++;
+  }
+  return null;
+}
+
+// Bare-JSON fallback for agent plans: fire ONLY when the entire trimmed text is
+// a single JSON object (or a ```json/``` fenced block) whose parsed form passes
+// isAgentPlan.  Mirrors extractBareJsonProposal.
+function extractBareAgentPlan(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  let candidate: string | null = null;
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    candidate = trimmed;
+  } else {
+    const fenceMatch = /^```(?:json)?\s*\r?\n([\s\S]+?)\r?\n[ \t]*```\s*$/.exec(trimmed);
+    if (fenceMatch) {
+      const inner = fenceMatch[1].trim();
+      if (inner.startsWith("{") && inner.endsWith("}")) candidate = inner;
+    }
+  }
+  if (candidate === null) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(candidate); } catch { return null; }
+  return isAgentPlan(parsed) ? candidate : null;
+}
+
+// Adapter: tries the fenced-block extractor first, then the bare-JSON fallback.
+// Returns the raw JSON string, or null if no valid plan is found.
+function matchAgentPlanBlock(text: string): string | null {
+  return extractAgentPlanFromFence(text) ?? extractBareAgentPlan(text);
+}
+
 interface ChatMessage {
   role: "user" | "assistant" | "error" | "cancelled";
   text: string;
@@ -888,6 +1064,13 @@ export default function ChatPanel({
   // state is "everything included".  Toggled per file by the Include/Skip button.
   // Cleared on cancel, on new send, and after successful approve.
   const [selectedMultiProposalIds, setSelectedMultiProposalIds] = useState<Set<string>>(new Set());
+
+  // ── Agent plan state ──────────────────────────────────────────────────────
+  // Set when the assistant response or user input contains a jarvis-agent-plan block.
+  // null = no active plan.  Step statuses are mutable via the plan panel UI toggles.
+  // Cleared on new send and by the Clear plan button.
+  // Not persisted — plan resets on page refresh (v1.3.0 foundation behaviour).
+  const [chatAgentPlan, setChatAgentPlan] = useState<AgentPlanState | null>(null);
 
   // ── Voice input state (Web Speech API) ───────────────────────────────────
   // Whether the browser supports SpeechRecognition — set after mount to avoid SSR mismatch.
@@ -1563,6 +1746,59 @@ export default function ChatPanel({
     }
   }
 
+  // ── Agent plan handlers ───────────────────────────────────────────────────
+
+  // Called after streaming ends (or from the user-paste interception path) to
+  // detect and set a jarvis-agent-plan block in the assistant response.
+  // Non-throwing — invalid or missing plans are silently ignored.
+  function detectAndSetAgentPlan(text: string): void {
+    const jsonBody = matchAgentPlanBlock(text);
+    if (!jsonBody) return;
+    const plan = parseAgentPlan(jsonBody);
+    if (!plan) {
+      // JSON parsed but failed validation — log and skip (don't break chat).
+      onActivity?.("Agent plan block found but failed validation — ignored", "info");
+      return;
+    }
+    setChatAgentPlan(plan);
+    onActivity?.(
+      `Agent plan detected: ${plan.steps.length} step${plan.steps.length !== 1 ? "s" : ""}`,
+      "info"
+    );
+  }
+
+  // Mark a single step as "done". No other steps are affected.
+  function handleMarkStepDone(stepId: string): void {
+    setChatAgentPlan((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((s) =>
+          s.id === stepId ? { ...s, status: "done" } : s
+        ),
+      };
+    });
+  }
+
+  // Reset a single step to "planned". Used to undo an accidental "done" mark.
+  function handleResetStep(stepId: string): void {
+    setChatAgentPlan((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((s) =>
+          s.id === stepId ? { ...s, status: "planned" } : s
+        ),
+      };
+    });
+  }
+
+  // Dismiss the entire plan panel. Does not affect write proposals.
+  function handleClearPlan(): void {
+    setChatAgentPlan(null);
+    onActivity?.("Agent plan cleared", "info");
+  }
+
   // Start or stop microphone voice input using the browser Web Speech API.
   // Recognized speech is appended to the chat input; nothing is sent automatically.
   // Microphone is only active while the user has the session open and clicked this button.
@@ -1867,6 +2103,7 @@ export default function ChatPanel({
     setChatMultiProposals(null);
     setChatMultiSummary(null);
     setSelectedMultiProposalIds(new Set());
+    setChatAgentPlan(null);
     setChatProposalError(null);
     setChatApproveError(null);
     setChatWriteSuccess(false);
@@ -1875,6 +2112,36 @@ export default function ChatPanel({
     setChatCopied(false);
     setChatCopyError(null);
     setSpeechError(null);
+
+    // ── User-pasted agent plan interception ──────────────────────────────────
+    // If the trimmed input contains (or is) a ```jarvis-agent-plan fenced block or
+    // a bare JSON object with type "jarvis_agent_plan", intercept it here before
+    // Ollama is called.  The plan is displayed immediately in the plan panel;
+    // no Ollama call is made, nothing is written automatically.
+    const userPlanJsonBody = matchAgentPlanBlock(trimmed);
+    if (userPlanJsonBody) {
+      const plan = parseAgentPlan(userPlanJsonBody);
+      if (plan) {
+        onActivity?.(
+          `Agent plan detected from user input: ${plan.steps.length} step${plan.steps.length !== 1 ? "s" : ""}`,
+          "info"
+        );
+        setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+        setInput("");
+        const isFirstPlanMessage = !messages.some((m) => m.role === "user");
+        const planSid = sessionIdRef.current;
+        if (planSid !== null) {
+          void persistMessage(planSid, "user", trimmed);
+          if (isFirstPlanMessage) {
+            void updateSessionTitle(planSid, trimmed.slice(0, 50)).then(() => {
+              onSessionUpdated?.();
+            });
+          }
+        }
+        setChatAgentPlan(plan);
+        return;
+      }
+    }
 
     // ── User-pasted proposal interception ─────────────────────────────────────
     // If the trimmed input is (or contains) a jarvis-write-proposal block — either
@@ -2130,6 +2397,8 @@ export default function ChatPanel({
         }
         // Scan for a jarvis-write-proposal block and create a pending proposal if found
         void detectAndPropose(assistantText);
+        // Scan for a jarvis-agent-plan block and display the plan panel if found
+        detectAndSetAgentPlan(assistantText);
         // Speak the response when the user has voice replies enabled.
         // Uses speakRepliesRef (not the closure-captured speakReplies state) so that
         // a toggle-off during a long streaming response is respected.
@@ -2697,6 +2966,141 @@ export default function ChatPanel({
               </>
             );
           })()}
+        </div>
+      )}
+
+      {/* ── Agent plan panel ──────────────────────────────────────────────────
+           Shown when the assistant response or user input contained a valid
+           jarvis-agent-plan block.  Steps are managed manually — nothing runs
+           automatically.  The panel is dismissed by the × button or a new send. */}
+      {chatAgentPlan && (
+        <div className="flex-shrink-0 border-t border-cyan-500/20 bg-cyan-900/5">
+          {/* Panel header */}
+          <div className="flex items-center justify-between px-6 py-2">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-cyan-400 uppercase tracking-widest">
+                Agent Plan
+              </p>
+              <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium">
+                {chatAgentPlan.steps.length} step{chatAgentPlan.steps.length !== 1 ? "s" : ""}
+              </span>
+              {/* Progress: how many steps are done */}
+              {chatAgentPlan.steps.some((s) => s.status === "done") && (
+                <span className="text-xs text-slate-600">
+                  {chatAgentPlan.steps.filter((s) => s.status === "done").length}/
+                  {chatAgentPlan.steps.length} done
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleClearPlan}
+              className="text-slate-600 hover:text-slate-400 text-sm leading-none"
+              aria-label="Clear plan"
+              title="Dismiss this plan"
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Plan title + summary */}
+          <div className="px-6 pb-2">
+            <p className="text-sm font-medium text-slate-200">{chatAgentPlan.title}</p>
+            {chatAgentPlan.summary && (
+              <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                {chatAgentPlan.summary}
+              </p>
+            )}
+          </div>
+
+          {/* Safety note — always visible to remind the user nothing runs automatically */}
+          <div className="mx-6 mb-2 px-3 py-1.5 rounded bg-slate-800/60 border border-slate-700/40">
+            <p className="text-xs text-slate-600 select-none">
+              Planning only. Steps do not run automatically.
+            </p>
+          </div>
+
+          {/* Step list — scrollable when there are many steps */}
+          <div className="px-6 pb-3 space-y-1.5 overflow-y-auto" style={{ maxHeight: "260px" }}>
+            {chatAgentPlan.steps.map((step, idx) => {
+              const isDone = step.status === "done";
+              const isBlocked = step.status === "blocked";
+              const isInProgress = step.status === "in_progress";
+              const rowBg = isDone
+                ? "bg-green-900/10 border-green-700/30"
+                : isBlocked
+                ? "bg-red-900/10 border-red-700/30"
+                : isInProgress
+                ? "bg-amber-900/10 border-amber-700/30"
+                : "bg-slate-800/40 border-slate-700/40";
+
+              const statusBadge = isDone
+                ? "bg-green-900/20 text-green-400 border-green-600/30"
+                : isBlocked
+                ? "bg-red-900/20 text-red-400 border-red-600/30"
+                : isInProgress
+                ? "bg-amber-900/20 text-amber-400 border-amber-600/30"
+                : "bg-slate-700/30 text-slate-500 border-slate-600/30";
+
+              return (
+                <div key={step.id} className={`rounded border px-3 py-2 ${rowBg}`}>
+                  <div className="flex items-start gap-2">
+                    {/* Step index */}
+                    <span className="text-xs text-slate-600 flex-shrink-0 mt-0.5 w-4 text-right select-none">
+                      {idx + 1}.
+                    </span>
+
+                    {/* Step body */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-xs font-medium ${isDone ? "text-green-400 line-through decoration-green-600/50" : "text-slate-200"}`}>
+                          {step.title}
+                        </span>
+                        {/* Kind badge (analysis / code / docs / test / review) */}
+                        {step.kind && (
+                          <span className="text-xs px-1.5 py-px rounded bg-slate-700/60 text-slate-500 border border-slate-600/40 font-medium">
+                            {step.kind}
+                          </span>
+                        )}
+                        {/* Status badge */}
+                        <span className={`text-xs px-1.5 py-px rounded border font-medium ${statusBadge}`}>
+                          {step.status.replace("_", " ")}
+                        </span>
+                      </div>
+                      {step.description && (
+                        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                          {step.description}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Mark done / Reset button */}
+                    <div className="flex-shrink-0">
+                      {!isDone ? (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkStepDone(step.id)}
+                          title="Mark this step as done"
+                          className="text-xs px-1.5 py-0.5 rounded bg-green-900/20 text-green-400 border border-green-600/30 hover:bg-green-900/40 transition-colors whitespace-nowrap"
+                        >
+                          Done
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleResetStep(step.id)}
+                          title="Reset this step to planned"
+                          className="text-xs px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 transition-colors whitespace-nowrap"
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

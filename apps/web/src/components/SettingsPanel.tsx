@@ -214,7 +214,7 @@ export default function SettingsPanel({
           {/* Identity row */}
           <div className="flex items-center gap-2 py-1.5">
             <span className="text-sm font-semibold text-slate-200">Jarvis</span>
-            <MonoValue>v{settings?.appVersion ?? "1.2.3"}</MonoValue>
+            <MonoValue>v{settings?.appVersion ?? "1.3.0"}</MonoValue>
             <Badge variant="done" label="stable" />
           </div>
           {/* One-line summary */}
@@ -469,6 +469,9 @@ export default function SettingsPanel({
           <SettingRow label="AI provider scope">
             <Badge variant="local" label="Ollama only" />
           </SettingRow>
+          <SettingRow label="Agent execution">
+            <Badge variant="disabled" label="manual only" />
+          </SettingRow>
         </Card>
 
         {/* ── F. Workspace ───────────────────────────────────────────────── */}
@@ -603,14 +606,20 @@ export default function SettingsPanel({
           <SettingRow label="Per-file approve/skip for multi-file proposals">
             <Badge variant="done" />
           </SettingRow>
-          <SettingRow label="Agent workflows">
+          <SettingRow label="Agent workflow foundation (planning only)">
+            <Badge variant="done" label="✓ foundation" />
+          </SettingRow>
+          <SettingRow label="Agent autonomous execution">
+            <Badge variant="disabled" label="never" />
+          </SettingRow>
+          <SettingRow label="Agent workflows (full)">
             <Badge variant="planned" />
           </SettingRow>
         </Card>
 
         {/* Footer note */}
         <p className="text-xs text-slate-600 text-center pb-2">
-          Jarvis v{settings?.appVersion ?? "1.2.3"} — local-first AI assistant ·
+          Jarvis v{settings?.appVersion ?? "1.3.0"} — local-first AI assistant ·
           No data sent to cloud services
         </p>
       </div>

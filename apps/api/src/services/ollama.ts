@@ -75,7 +75,17 @@ export const JARVIS_SYSTEM_PROMPT =
   "```\n\n" +
   "v2 rules: operation must be 'create' or 'update'. Maximum 5 files per proposal. No delete operation. " +
   "The user must click 'Approve all' before any file is written — nothing is written automatically. " +
-  "For a single file, use the v1 format (path + content only, no type/version/files fields).";
+  "For a single file, use the v1 format (path + content only, no type/version/files fields).\n\n" +
+  "## Agent workflow plans\n\n" +
+  "When the user asks for a step-by-step plan or multi-step workflow, respond with a jarvis-agent-plan block:\n" +
+  "```jarvis-agent-plan\n" +
+  "{\"type\":\"jarvis_agent_plan\",\"version\":1,\"title\":\"Plan title\",\"summary\":\"Brief description\",\"steps\":[{\"id\":\"1\",\"title\":\"Step title\",\"description\":\"What this step involves.\",\"kind\":\"analysis\",\"status\":\"planned\"}]}\n" +
+  "```\n\n" +
+  "Agent plan rules: Plans are for user review only — steps never run automatically. " +
+  "Do not claim any step has been executed or will execute automatically. " +
+  "If a step involves writing files, a separate jarvis-write-proposal block must be submitted and approved by the user in the normal way. " +
+  "Maximum 10 steps. kind must be one of: analysis, code, docs, test, review. " +
+  "Set status to 'planned' for all steps in a new plan.";
 
 export interface OllamaModel {
   name: string;
