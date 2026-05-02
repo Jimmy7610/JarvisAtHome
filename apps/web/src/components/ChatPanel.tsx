@@ -1982,6 +1982,61 @@ export default function ChatPanel({
     });
   }
 
+  // ── Ask Jarvis about step ─────────────────────────────────────────────────
+  //
+  // Pre-fills the chat input with a structured prompt about a specific plan
+  // step.  The user can edit or send it at their own discretion.
+  //
+  // SAFETY CONTRACT:
+  //   - Does NOT call send() or Ollama in any way.
+  //   - Does NOT change step status, notes, or plan state.
+  //   - Does NOT create a write proposal.
+  //   - The prompt explicitly instructs the model to use jarvis-write-proposal
+  //     for any file changes and wait for approval.
+  function handleAskAboutStep(stepId: string): void {
+    if (!chatAgentPlan) return;
+    const step = chatAgentPlan.steps.find((s) => s.id === stepId);
+    if (!step) return;
+
+    // Build the prompt lines, omitting empty optional fields.
+    const lines: string[] = [
+      "I am working on this Jarvis agent plan:",
+      "",
+      `Plan: ${chatAgentPlan.title}`,
+    ];
+    if (chatAgentPlan.summary) {
+      lines.push(`Summary: ${chatAgentPlan.summary}`);
+    }
+    lines.push("", "Current step:");
+    lines.push(`- Title: ${step.title}`);
+    if (step.kind) lines.push(`- Kind: ${step.kind}`);
+    lines.push(`- Status: ${step.status.replace("_", " ")}`);
+    if (step.description) lines.push(`- Description: ${step.description}`);
+    if (step.note) lines.push(`- Note: ${step.note}`);
+    lines.push(
+      "",
+      "Help me with this step. Do not write files directly. If file changes are needed, use a jarvis-write-proposal block and wait for approval."
+    );
+
+    const prompt = lines.join("\n");
+
+    // Set the chat input to the generated prompt.
+    setInput(prompt);
+
+    // Auto-grow the textarea so the full prompt is visible immediately.
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(
+        textareaRef.current.scrollHeight,
+        200
+      )}px`;
+      // Move focus to the input so the user can edit before sending.
+      textareaRef.current.focus();
+    }
+
+    onActivity?.(`Agent step prompt prepared: ${step.title}`, "info");
+  }
+
   // Start or stop microphone voice input using the browser Web Speech API.
   // Recognized speech is appended to the chat input; nothing is sent automatically.
   // Microphone is only active while the user has the session open and clicked this button.
@@ -3313,8 +3368,8 @@ export default function ChatPanel({
                           </div>
                         </div>
                       ) : (
-                        /* Note action buttons — Add / Edit + Clear */
-                        <div className="mt-1 flex items-center gap-1.5">
+                        /* Note action buttons — Add / Edit + Clear · Ask Jarvis */
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                           {step.note ? (
                             <>
                               <button
@@ -3342,6 +3397,17 @@ export default function ChatPanel({
                               + Add note
                             </button>
                           )}
+                          {/* Ask Jarvis — pre-fills chat input with a step prompt.
+                               Does NOT send automatically. Does NOT change step state. */}
+                          <span className="text-slate-700 text-xs select-none">·</span>
+                          <button
+                            type="button"
+                            onClick={() => handleAskAboutStep(step.id)}
+                            title="Pre-fill the chat input with a prompt about this step — does not send automatically"
+                            className="text-xs text-cyan-700 hover:text-cyan-400 transition-colors"
+                          >
+                            Ask Jarvis
+                          </button>
                         </div>
                       )}
                     </div>
