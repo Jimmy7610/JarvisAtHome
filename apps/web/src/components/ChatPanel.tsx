@@ -1877,6 +1877,35 @@ export default function ChatPanel({
     });
   }
 
+  // Mark a step as the currently active / in-progress step.
+  // Rules:
+  //   - Only one step can be in_progress at a time.
+  //   - Any existing in_progress step is moved back to "planned".
+  //   - Done steps cannot be activated (guard at the top).
+  //   - blocked steps CAN be activated (user may want to call attention to a blocker).
+  // Saves the updated plan to localStorage immediately and logs an activity event.
+  // Active step is visual/manual only — nothing is sent to the model or executed.
+  function handleSetStepActive(stepId: string): void {
+    setChatAgentPlan((prev) => {
+      if (!prev) return prev;
+      const target = prev.steps.find((s) => s.id === stepId);
+      // Guard: silently ignore if the target is already done or not found
+      if (!target || target.status === "done") return prev;
+      const updated: AgentPlanState = {
+        ...prev,
+        steps: prev.steps.map((s) => {
+          if (s.id === stepId) return { ...s, status: "in_progress" as AgentPlanStepStatus };
+          // Move any other in_progress step back to planned
+          if (s.status === "in_progress") return { ...s, status: "planned" as AgentPlanStepStatus };
+          return s;
+        }),
+      };
+      saveAgentPlanForSession(sessionIdRef.current, updated);
+      onActivity?.(`Agent step active: ${target.title}`, "info");
+      return updated;
+    });
+  }
+
   // Dismiss the entire plan panel. Does not affect write proposals.
   // Also removes the saved plan from localStorage for the current session.
   function handleClearPlan(): void {
@@ -3133,20 +3162,32 @@ export default function ChatPanel({
         <div className="flex-shrink-0 border-t border-cyan-500/20 bg-cyan-900/5">
           {/* Panel header */}
           <div className="flex items-center justify-between px-6 py-2">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-semibold text-cyan-400 uppercase tracking-widest">
+            <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+              <p className="text-xs font-semibold text-cyan-400 uppercase tracking-widest flex-shrink-0">
                 Agent Plan
               </p>
-              <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium">
+              <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium flex-shrink-0">
                 {chatAgentPlan.steps.length} step{chatAgentPlan.steps.length !== 1 ? "s" : ""}
               </span>
               {/* Progress: how many steps are done */}
               {chatAgentPlan.steps.some((s) => s.status === "done") && (
-                <span className="text-xs text-slate-600">
+                <span className="text-xs text-slate-600 flex-shrink-0">
                   {chatAgentPlan.steps.filter((s) => s.status === "done").length}/
                   {chatAgentPlan.steps.length} done
                 </span>
               )}
+              {/* Active step indicator — shows which step is currently in progress */}
+              {(() => {
+                const activeStep = chatAgentPlan.steps.find((s) => s.status === "in_progress");
+                return activeStep ? (
+                  <span
+                    className="text-xs text-amber-500/80 truncate"
+                    title={`Current step: ${activeStep.title}`}
+                  >
+                    ▶ {activeStep.title}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <button
               type="button"
@@ -3187,7 +3228,8 @@ export default function ChatPanel({
                 : isBlocked
                 ? "bg-red-900/10 border-red-700/30"
                 : isInProgress
-                ? "bg-amber-900/10 border-amber-700/30"
+                // Stronger amber highlight for the active/current step
+                ? "bg-amber-900/20 border-amber-500/50"
                 : "bg-slate-800/40 border-slate-700/40";
 
               const statusBadge = isDone
@@ -3304,9 +3346,22 @@ export default function ChatPanel({
                       )}
                     </div>
 
-                    {/* Mark done / Reset button */}
-                    <div className="flex-shrink-0">
-                      {!isDone ? (
+                    {/* Step action buttons (right column):
+                         planned/blocked → Set active + Done
+                         in_progress    → Done  (it's already the current step)
+                         done           → Reset */}
+                    <div className="flex-shrink-0 flex flex-col gap-1 items-end">
+                      {isDone ? (
+                        <button
+                          type="button"
+                          onClick={() => handleResetStep(step.id)}
+                          title="Reset this step to planned"
+                          className="text-xs px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 transition-colors whitespace-nowrap"
+                        >
+                          Reset
+                        </button>
+                      ) : isInProgress ? (
+                        /* Active step — just show Done; "Set active" not needed */
                         <button
                           type="button"
                           onClick={() => handleMarkStepDone(step.id)}
@@ -3316,14 +3371,25 @@ export default function ChatPanel({
                           Done
                         </button>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleResetStep(step.id)}
-                          title="Reset this step to planned"
-                          className="text-xs px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 border border-slate-600/30 hover:bg-slate-700/60 transition-colors whitespace-nowrap"
-                        >
-                          Reset
-                        </button>
+                        /* planned or blocked — offer Set active and Done */
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleSetStepActive(step.id)}
+                            title="Mark this step as the current active step"
+                            className="text-xs px-1.5 py-0.5 rounded bg-amber-900/20 text-amber-400 border border-amber-600/30 hover:bg-amber-900/40 transition-colors whitespace-nowrap"
+                          >
+                            Set active
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkStepDone(step.id)}
+                            title="Mark this step as done"
+                            className="text-xs px-1.5 py-0.5 rounded bg-green-900/20 text-green-400 border border-green-600/30 hover:bg-green-900/40 transition-colors whitespace-nowrap"
+                          >
+                            Done
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
