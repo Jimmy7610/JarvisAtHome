@@ -8,6 +8,7 @@ import {
   getAllowedWorkspace,
   listFiles,
   readTextFile,
+  scanWorkspaceOverview,
 } from "../services/fileTools";
 import { proposeWrite, approveWrite } from "../services/writeTools";
 import path from "path";
@@ -56,6 +57,23 @@ router.get("/read", (req: Request, res: Response) => {
   try {
     const { content, size } = readTextFile(relativePath);
     res.json({ ok: true, path: relativePath, content, size });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error.";
+    res.json({ ok: false, error: message });
+  }
+});
+
+// GET /files/overview
+// Recursively scans the workspace and returns aggregated metadata.
+// No file contents are returned.  All paths are workspace-relative.
+// The scan is capped at OVERVIEW_MAX_FILES (2000) files to stay fast.
+// Returns: { ok: true, totalFiles, totalDirectories, extensions, largestFiles,
+//            recentFiles, hints, scannedFiles, capped }
+// Returns: { ok: false, error: "..." } if the scan fails.
+router.get("/overview", (_req: Request, res: Response) => {
+  try {
+    const overview = scanWorkspaceOverview();
+    res.json({ ok: true, ...overview });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
     res.json({ ok: false, error: message });

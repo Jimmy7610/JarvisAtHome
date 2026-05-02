@@ -19,7 +19,7 @@ router.get("/", (_req, res) => {
     ok: true,
 
     // ── App identity ──────────────────────────────────────────────────────────
-    appVersion: "1.3.5",
+    appVersion: "1.4.0",
     apiVersion: "0.1.0",
     environment: "local",
 

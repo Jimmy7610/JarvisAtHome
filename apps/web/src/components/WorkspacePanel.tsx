@@ -33,6 +33,28 @@ type ReadResponse = {
   error?: string;
 };
 
+// ── Workspace overview types ──────────────────────────────────────────────────
+// Mirrors the shape returned by GET /files/overview.
+// Paths are always workspace-relative — never absolute.
+
+type OverviewData = {
+  totalFiles: number;
+  totalDirectories: number;
+  scannedFiles: number;
+  capped: boolean;
+  extensions: Array<{ ext: string; count: number }>;
+  largestFiles: Array<{ path: string; size: number }>;
+  recentFiles: Array<{ path: string; size: number; modifiedAt: string }>;
+  hints: {
+    hasReadme: boolean;
+    hasPackageJson: boolean;
+    hasTsConfig: boolean;
+    hasMakefile: boolean;
+  };
+};
+
+type OverviewResponse = { ok: boolean; error?: string } & Partial<OverviewData>;
+
 // ─── Write proposal types (mirrors backend writeTools.ts) ─────────────────────
 
 type DiffLine = {
@@ -168,6 +190,14 @@ export default function WorkspacePanel({
   // true after a successful write — cleared on file switch or preview close
   const [writeSuccess, setWriteSuccess] = useState(false);
 
+  // ── Workspace overview state ────────────────────────────────────────────────
+  // showOverview: true → overview panel is shown instead of the file browser.
+  // Fetched on demand (not on mount) to avoid an unnecessary scan at startup.
+  const [showOverview, setShowOverview] = useState(false);
+  const [overviewData, setOverviewData] = useState<OverviewData | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+
   // Reload the listing whenever the current directory changes.
   // After loading, auto-selects a pending file if one was set via openFileRequest.
   useEffect(() => {
@@ -250,6 +280,27 @@ export default function WorkspacePanel({
         (e) => e.type === "file" && e.path === selectedPath
       );
       if (!stillExists) closePreview();
+    }
+  }
+
+  // Fetch workspace overview metadata from the backend.
+  // Called on demand (when the user opens the overview or clicks Reload).
+  // Never fetches file contents — metadata only.
+  async function fetchOverview(): Promise<void> {
+    setOverviewLoading(true);
+    setOverviewError(null);
+    try {
+      const res = await fetch(`${API_URL}/files/overview`);
+      const data = (await res.json()) as OverviewResponse;
+      if (!data.ok) {
+        setOverviewError(data.error ?? "Failed to load workspace overview.");
+        return;
+      }
+      setOverviewData(data as OverviewData);
+    } catch {
+      setOverviewError("API unreachable — is the Jarvis API running?");
+    } finally {
+      setOverviewLoading(false);
     }
   }
 
@@ -466,21 +517,235 @@ export default function WorkspacePanel({
           Workspace Files
         </span>
         <div className="flex items-center gap-2">
-          {/* Refresh button — reloads the current directory listing */}
+          {/* Overview toggle — switches between file browser and overview panel */}
           <button
-            onClick={() => void refreshWorkspace()}
-            disabled={listLoading}
-            className={`text-slate-600 hover:text-slate-400 transition-colors text-sm leading-none disabled:opacity-40 disabled:cursor-not-allowed ${listLoading ? "animate-spin" : ""}`}
-            title="Refresh file list"
-            aria-label="Refresh"
+            onClick={() => {
+              if (!showOverview) {
+                setShowOverview(true);
+                // Auto-fetch on first open (or if no data yet)
+                if (!overviewData) void fetchOverview();
+              } else {
+                setShowOverview(false);
+              }
+            }}
+            className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+              showOverview
+                ? "bg-cyan-900/30 text-cyan-400 border-cyan-700/40"
+                : "text-slate-600 hover:text-slate-400 border-slate-700/40 bg-slate-800/40 hover:border-slate-600/40"
+            }`}
+            title={showOverview ? "Back to file browser" : "Workspace overview"}
           >
-            ↻
+            Overview
           </button>
+          {/* Refresh button — reloads the current directory listing (hidden in overview mode) */}
+          {!showOverview && (
+            <button
+              onClick={() => void refreshWorkspace()}
+              disabled={listLoading}
+              className={`text-slate-600 hover:text-slate-400 transition-colors text-sm leading-none disabled:opacity-40 disabled:cursor-not-allowed ${listLoading ? "animate-spin" : ""}`}
+              title="Refresh file list"
+              aria-label="Refresh"
+            >
+              ↻
+            </button>
+          )}
           <span className="text-xs text-slate-700 bg-slate-800/80 px-1.5 py-0.5 rounded border border-slate-700">
             Read-only
           </span>
         </div>
       </div>
+
+      {/* ── Workspace Overview panel ──────────────────────────────────────────
+           Shown instead of the file browser when the user clicks Overview.
+           Read-only metadata only — never shows file contents or absolute paths. */}
+      {showOverview && (
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {/* Overview sub-header with reload */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/60 flex-shrink-0">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
+              Overview
+            </span>
+            <button
+              onClick={() => void fetchOverview()}
+              disabled={overviewLoading}
+              className={`text-slate-600 hover:text-slate-400 transition-colors text-sm leading-none disabled:opacity-40 ${overviewLoading ? "animate-spin" : ""}`}
+              title="Reload overview"
+              aria-label="Reload overview"
+            >
+              ↻
+            </button>
+          </div>
+
+          {/* Loading */}
+          {overviewLoading && !overviewData && (
+            <p className="text-xs text-slate-600 px-4 py-3">Scanning workspace…</p>
+          )}
+
+          {/* Error */}
+          {overviewError && (
+            <p className="text-xs text-red-500/70 px-4 py-3">{overviewError}</p>
+          )}
+
+          {/* Data */}
+          {overviewData && (
+            <div className="px-4 py-3 space-y-4 text-xs">
+
+              {/* Totals */}
+              <section>
+                <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                  Summary
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-slate-800/40 rounded px-3 py-2 border border-slate-700/30">
+                    <p className="text-base font-semibold text-slate-200">
+                      {overviewData.totalFiles.toLocaleString()}
+                    </p>
+                    <p className="text-slate-500">files</p>
+                  </div>
+                  <div className="bg-slate-800/40 rounded px-3 py-2 border border-slate-700/30">
+                    <p className="text-base font-semibold text-slate-200">
+                      {overviewData.totalDirectories.toLocaleString()}
+                    </p>
+                    <p className="text-slate-500">folders</p>
+                  </div>
+                </div>
+                {overviewData.capped && (
+                  <p className="text-amber-500/60 mt-1.5">
+                    Scan capped at{" "}
+                    {overviewData.scannedFiles.toLocaleString()} files —
+                    some details may be incomplete.
+                  </p>
+                )}
+              </section>
+
+              {/* Project hints */}
+              {(overviewData.hints.hasReadme ||
+                overviewData.hints.hasPackageJson ||
+                overviewData.hints.hasTsConfig ||
+                overviewData.hints.hasMakefile) && (
+                <section>
+                  <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                    Detected
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {overviewData.hints.hasReadme && (
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-900/20 text-cyan-500/70 border border-cyan-700/30">
+                        README
+                      </span>
+                    )}
+                    {overviewData.hints.hasPackageJson && (
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-900/20 text-cyan-500/70 border border-cyan-700/30">
+                        package.json
+                      </span>
+                    )}
+                    {overviewData.hints.hasTsConfig && (
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-900/20 text-cyan-500/70 border border-cyan-700/30">
+                        tsconfig.json
+                      </span>
+                    )}
+                    {overviewData.hints.hasMakefile && (
+                      <span className="px-1.5 py-0.5 rounded bg-cyan-900/20 text-cyan-500/70 border border-cyan-700/30">
+                        Makefile
+                      </span>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {/* File types */}
+              {overviewData.extensions.length > 0 && (
+                <section>
+                  <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                    File types
+                  </p>
+                  <div className="space-y-1.5">
+                    {overviewData.extensions.map(({ ext, count }) => (
+                      <div key={ext} className="flex items-center gap-2">
+                        <span className="text-slate-400 w-20 flex-shrink-0 font-mono truncate">
+                          {ext}
+                        </span>
+                        <div className="flex-1 h-1 rounded-full bg-slate-700/50 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-cyan-500/40"
+                            style={{
+                              width: `${Math.round(
+                                (count / overviewData.extensions[0].count) * 100
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="text-slate-600 w-7 text-right flex-shrink-0">
+                          {count}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Largest files */}
+              {overviewData.largestFiles.length > 0 && (
+                <section>
+                  <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                    Largest files
+                  </p>
+                  <div className="space-y-1">
+                    {overviewData.largestFiles.map(({ path: fp, size }) => (
+                      <div
+                        key={fp}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span className="text-slate-400 truncate font-mono">
+                          {fp}
+                        </span>
+                        <span className="text-slate-600 flex-shrink-0">
+                          {formatBytes(size)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Recently modified */}
+              {overviewData.recentFiles.length > 0 && (
+                <section>
+                  <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
+                    Recently modified
+                  </p>
+                  <div className="space-y-1">
+                    {overviewData.recentFiles.map(({ path: fp, modifiedAt }) => (
+                      <div
+                        key={fp}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span className="text-slate-400 truncate font-mono">
+                          {fp}
+                        </span>
+                        <span className="text-slate-600 flex-shrink-0 whitespace-nowrap">
+                          {new Date(modifiedAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Read-only safety note */}
+              <div className="px-3 py-2 rounded bg-slate-800/60 border border-slate-700/40">
+                <p className="text-slate-600">
+                  Workspace overview is read-only. It never changes files.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── File browser — hidden while overview is showing ───────────────────
+           All existing browsing, search, preview, and write-proposal behaviour
+           is completely unchanged. */}
+      {!showOverview && (<>
 
       {/* Breadcrumb / path indicator */}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b border-slate-800/60 flex-shrink-0 min-w-0">
@@ -834,6 +1099,7 @@ export default function WorkspacePanel({
           )}
         </div>
       )}
+      </>)}
     </div>
   );
 }
