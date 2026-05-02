@@ -3224,11 +3224,11 @@ export default function ChatPanel({
               <span className="text-xs px-1.5 py-px rounded bg-cyan-500/10 text-cyan-500/80 border border-cyan-500/20 font-medium flex-shrink-0">
                 {chatAgentPlan.steps.length} step{chatAgentPlan.steps.length !== 1 ? "s" : ""}
               </span>
-              {/* Progress: how many steps are done */}
+              {/* Compact done count — full breakdown is in the progress summary below */}
               {chatAgentPlan.steps.some((s) => s.status === "done") && (
-                <span className="text-xs text-slate-600 flex-shrink-0">
+                <span className="text-xs text-green-500/60 flex-shrink-0">
                   {chatAgentPlan.steps.filter((s) => s.status === "done").length}/
-                  {chatAgentPlan.steps.length} done
+                  {chatAgentPlan.steps.length}
                 </span>
               )}
               {/* Active step indicator — shows which step is currently in progress */}
@@ -3264,6 +3264,75 @@ export default function ChatPanel({
               </p>
             )}
           </div>
+
+          {/* ── Progress summary ─────────────────────────────────────────────
+               Derived from step statuses — no separate state needed.
+               Updates immediately whenever a step is marked done/reset/active. */}
+          {(() => {
+            const totalSteps = chatAgentPlan.steps.length;
+            const doneCount = chatAgentPlan.steps.filter(
+              (s) => s.status === "done"
+            ).length;
+            const activeCount = chatAgentPlan.steps.filter(
+              (s) => s.status === "in_progress"
+            ).length;
+            const plannedCount = chatAgentPlan.steps.filter(
+              (s) => s.status === "planned"
+            ).length;
+            const blockedCount = chatAgentPlan.steps.filter(
+              (s) => s.status === "blocked"
+            ).length;
+            const donePercent =
+              totalSteps > 0
+                ? Math.round((doneCount / totalSteps) * 100)
+                : 0;
+
+            // Build the stat parts, skipping zero-count optional items
+            const parts: string[] = [`${doneCount}/${totalSteps} done`];
+            if (activeCount > 0) parts.push(`${activeCount} active`);
+            if (plannedCount > 0) parts.push(`${plannedCount} planned`);
+            if (blockedCount > 0) parts.push(`${blockedCount} blocked`);
+
+            return (
+              <div className="px-6 pb-2">
+                {/* Stat text row */}
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-slate-600 select-none">
+                    {parts.map((part, i) => (
+                      <span key={part}>
+                        {i > 0 && (
+                          <span className="mx-1 text-slate-700">·</span>
+                        )}
+                        <span
+                          className={
+                            part.includes("done") && doneCount > 0
+                              ? "text-green-500/70"
+                              : part.includes("active")
+                              ? "text-amber-500/70"
+                              : part.includes("blocked")
+                              ? "text-red-500/60"
+                              : "text-slate-500"
+                          }
+                        >
+                          {part}
+                        </span>
+                      </span>
+                    ))}
+                  </p>
+                  <span className="text-xs text-slate-700 select-none">
+                    {donePercent}%
+                  </span>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1 rounded-full bg-slate-700/50 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-green-500/50 transition-all duration-300"
+                    style={{ width: `${donePercent}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Safety note — always visible to remind the user nothing runs automatically */}
           <div className="mx-6 mb-2 px-3 py-1.5 rounded bg-slate-800/60 border border-slate-700/40">
