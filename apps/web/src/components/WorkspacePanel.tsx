@@ -551,6 +551,47 @@ export default function WorkspacePanel({
     }
   }
 
+  // ── Overview file deep-link ─────────────────────────────────────────────────
+
+  // Called when the user clicks a file path in the Workspace Overview panel.
+  // Switches back to the file browser, navigates to the file's parent folder
+  // (if different from the current directory), and opens a read-only preview —
+  // identical to clicking the file in the normal file listing.
+  // Read-only: no write, no modification, no deletion.
+  function handleOverviewFileClick(filePath: string): void {
+    // Return to the file browser view
+    setShowOverview(false);
+
+    const slashIdx = filePath.lastIndexOf("/");
+    const parentDir = slashIdx > 0 ? filePath.slice(0, slashIdx) : "";
+
+    // Emit activity event (path only, never content)
+    onActivity?.(`Workspace overview file opened: ${filePath}`, "info");
+
+    // Queue the file so the listing effect can select it after load
+    pendingOpenFileRef.current = filePath;
+
+    if (currentPath !== parentDir) {
+      // navigateTo changes currentPath → triggers the listing useEffect
+      // which calls fetchList and then handles pendingOpenFileRef
+      navigateTo(parentDir);
+    } else {
+      // Already in the right folder — listing useEffect will not re-fire.
+      // Refresh and auto-select manually (mirrors the openFileRequest handler).
+      async function refreshAndOpen(): Promise<void> {
+        const newEntries = await fetchList(parentDir);
+        const pending = pendingOpenFileRef.current;
+        if (!pending) return;
+        const found = newEntries.some(
+          (e) => e.type === "file" && e.path === pending
+        );
+        pendingOpenFileRef.current = null;
+        if (found) await handleSelectFile(pending);
+      }
+      void refreshAndOpen();
+    }
+  }
+
   function handleCancelProposal(): void {
     const cancelledPath = proposal?.path ?? selectedPath;
     setProposal(null);
@@ -739,7 +780,7 @@ export default function WorkspacePanel({
                 </section>
               )}
 
-              {/* Largest files */}
+              {/* Largest files — paths are clickable to open a preview */}
               {overviewData.largestFiles.length > 0 && (
                 <section>
                   <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
@@ -751,9 +792,13 @@ export default function WorkspacePanel({
                         key={fp}
                         className="flex items-center justify-between gap-2"
                       >
-                        <span className="text-slate-400 truncate font-mono">
+                        <button
+                          onClick={() => handleOverviewFileClick(fp)}
+                          className="text-slate-400 truncate font-mono text-left hover:text-cyan-400 transition-colors"
+                          title={`Open ${fp}`}
+                        >
                           {fp}
-                        </span>
+                        </button>
                         <span className="text-slate-600 flex-shrink-0">
                           {formatBytes(size)}
                         </span>
@@ -763,7 +808,7 @@ export default function WorkspacePanel({
                 </section>
               )}
 
-              {/* Recently modified */}
+              {/* Recently modified — paths are clickable to open a preview */}
               {overviewData.recentFiles.length > 0 && (
                 <section>
                   <p className="font-semibold text-slate-500 uppercase tracking-widest mb-2">
@@ -775,9 +820,13 @@ export default function WorkspacePanel({
                         key={fp}
                         className="flex items-center justify-between gap-2"
                       >
-                        <span className="text-slate-400 truncate font-mono">
+                        <button
+                          onClick={() => handleOverviewFileClick(fp)}
+                          className="text-slate-400 truncate font-mono text-left hover:text-cyan-400 transition-colors"
+                          title={`Open ${fp}`}
+                        >
                           {fp}
-                        </span>
+                        </button>
                         <span className="text-slate-600 flex-shrink-0 whitespace-nowrap">
                           {new Date(modifiedAt).toLocaleDateString()}
                         </span>
