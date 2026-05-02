@@ -111,6 +111,57 @@ function getDisplayLines(diff: DiffLine[]): DisplayLine[] {
   return result;
 }
 
+// Build a structured plain-text prompt from workspace overview data.
+// Used by the "Ask Jarvis about this workspace" button to pre-fill the chat input.
+// Never includes file contents — workspace metadata only (paths, sizes, dates).
+function generateOverviewPrompt(data: OverviewData): string {
+  const lines: string[] = [
+    "I want you to analyze this workspace overview and suggest safe next improvements.",
+    "",
+    "Workspace overview:",
+    `- Total files: ${data.totalFiles}`,
+    `- Total folders: ${data.totalDirectories}`,
+  ];
+  if (data.capped) {
+    lines.push(
+      `- Note: scan was capped at ${data.scannedFiles} files (workspace may be larger)`
+    );
+  }
+  if (data.extensions.length > 0) {
+    const extSummary = data.extensions
+      .slice(0, 8)
+      .map(({ ext, count }) => `${ext} (${count})`)
+      .join(", ");
+    lines.push(`- Top file types: ${extSummary}`);
+  }
+  if (data.largestFiles.length > 0) {
+    lines.push("- Largest files:");
+    for (const { path: fp, size } of data.largestFiles) {
+      lines.push(`  - ${fp} (${formatBytes(size)})`);
+    }
+  }
+  if (data.recentFiles.length > 0) {
+    lines.push("- Recently modified:");
+    for (const { path: fp, modifiedAt } of data.recentFiles) {
+      lines.push(`  - ${fp} (${new Date(modifiedAt).toLocaleDateString()})`);
+    }
+  }
+  const hintLines: string[] = [];
+  if (data.hints.hasReadme) hintLines.push("README");
+  if (data.hints.hasPackageJson) hintLines.push("package.json");
+  if (data.hints.hasTsConfig) hintLines.push("tsconfig.json");
+  if (data.hints.hasMakefile) hintLines.push("Makefile");
+  if (hintLines.length > 0) {
+    lines.push(`- Detected project files: ${hintLines.join(", ")}`);
+  }
+  lines.push(
+    "",
+    "Please suggest safe next improvements. Do not write files directly." +
+      " If file changes are needed, use a jarvis-write-proposal block and wait for approval."
+  );
+  return lines.join("\n");
+}
+
 // Format a byte count as a compact human-readable string
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
@@ -140,6 +191,7 @@ function buildBreadcrumbs(
 export default function WorkspacePanel({
   onAttachFile,
   onAskAboutFile,
+  onAskAboutOverview,
   onActivity,
   openFileRequest,
   onOpenFileRequestConsumed,
@@ -148,6 +200,10 @@ export default function WorkspacePanel({
   // Attaches the file AND prefills a suggested question in the chat input.
   // Nothing is sent automatically — user edits and presses Send.
   onAskAboutFile?: (path: string, content: string, size: number) => void;
+  // Called when the user clicks "Ask Jarvis about this workspace" in the overview.
+  // Receives a structured prompt built from overview metadata (no file contents).
+  // Parent sets prefillInput and switches to chat view — nothing sent automatically.
+  onAskAboutOverview?: (prompt: string) => void;
   // Reports a named activity event to the parent for display in ActivityPanel.
   onActivity?: (text: string, type?: "info" | "write" | "error") => void;
   // When set, WorkspacePanel navigates to the file's folder and opens a preview.
@@ -729,6 +785,24 @@ export default function WorkspacePanel({
                     ))}
                   </div>
                 </section>
+              )}
+
+              {/* Ask Jarvis about this workspace — pre-fills chat input with
+                   structured overview metadata as a prompt.  Nothing is sent
+                   automatically; user edits and presses Send.  Disabled until
+                   overview data has loaded at least once. */}
+              {onAskAboutOverview && (
+                <button
+                  onClick={() => {
+                    if (overviewData) {
+                      onAskAboutOverview(generateOverviewPrompt(overviewData));
+                    }
+                  }}
+                  disabled={!overviewData || overviewLoading}
+                  className="w-full text-xs py-1.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Ask Jarvis about this workspace
+                </button>
               )}
 
               {/* Read-only safety note */}

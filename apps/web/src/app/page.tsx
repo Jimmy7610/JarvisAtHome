@@ -517,6 +517,16 @@ export default function DashboardPage() {
     setPrefillInput(null);
   }
 
+  // Called by WorkspacePanel's "Ask Jarvis about this workspace" button.
+  // Queues a structured prompt built from workspace overview metadata (no file
+  // contents) and switches to the chat view so the user can review and send it.
+  // Nothing is sent automatically — user edits the prefilled input and presses Send.
+  function handleAskAboutOverview(prompt: string): void {
+    setPrefillInput(prompt);
+    setView("chat");
+    handleActivity("Workspace overview queued for chat analysis", "info");
+  }
+
   // Called by ChatPanel when the user clicks "Open draft" after a successful write.
   // Passes the approved relative path to WorkspacePanel so it can navigate and preview.
   function handleOpenWorkspaceFile(relativePath: string): void {
@@ -761,7 +771,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.4.0 — workspace intelligence foundation
+          v1.4.1 — workspace overview ask helper
         </div>
       </aside>
 
@@ -861,6 +871,7 @@ export default function DashboardPage() {
               <WorkspacePanel
                 onAttachFile={handleAttachFile}
                 onAskAboutFile={handleAskAboutFile}
+                onAskAboutOverview={handleAskAboutOverview}
                 onActivity={handleActivity}
                 openFileRequest={openFileRequest}
                 onOpenFileRequestConsumed={() => setOpenFileRequest(null)}
