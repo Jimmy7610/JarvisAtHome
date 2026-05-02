@@ -761,7 +761,7 @@ export default function DashboardPage() {
         />
 
         <div className="px-5 py-4 border-t border-slate-800 text-xs text-slate-600">
-          v1.3.1 — agent plan persistence
+          v1.3.2 — agent plan step notes
         </div>
       </aside>
 

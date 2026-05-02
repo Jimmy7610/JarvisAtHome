@@ -547,13 +547,15 @@ type AgentPlanStepKind = "analysis" | "code" | "docs" | "test" | "review";
 // Valid step statuses — also the values the model may set in the initial JSON.
 type AgentPlanStepStatus = "planned" | "in_progress" | "done" | "blocked";
 
-// Mutable in-component step shape (status toggled by the user via plan panel).
+// Mutable in-component step shape (status toggled, notes written by the user via plan panel).
 interface AgentPlanStep {
   id: string;
   title: string;
   description: string;
   kind?: AgentPlanStepKind;
   status: AgentPlanStepStatus;
+  // Optional user-written annotation. Max 1000 chars. Never injected into model prompt.
+  note?: string;
 }
 
 // Mutable in-component plan shape stored as component state.
@@ -576,6 +578,9 @@ type AgentPlanJson = {
     description: string;
     kind?: string;
     status?: string;
+    // note is accepted if present in the incoming JSON (forward-compat).
+    // It is trimmed and capped at 1000 chars during parseAgentPlan.
+    note?: string;
   }>;
 };
 
@@ -624,7 +629,11 @@ function parseAgentPlan(jsonBody: string): AgentPlanState | null {
       const status = s.status && VALID_STATUSES.has(s.status)
         ? (s.status as AgentPlanStepStatus)
         : "planned";
-      return { id: s.id.trim(), title: s.title.trim(), description: s.description, kind, status };
+      // Accept an optional note from the JSON (e.g. user-pasted plan with saved notes).
+      // Trim and cap at 1000 chars; absent or empty becomes undefined.
+      const rawNote = typeof s.note === "string" ? s.note.trim().slice(0, 1000) : undefined;
+      const note = rawNote || undefined;
+      return { id: s.id.trim(), title: s.title.trim(), description: s.description, kind, status, note };
     }),
   };
 }
@@ -1125,10 +1134,17 @@ export default function ChatPanel({
 
   // ── Agent plan state ──────────────────────────────────────────────────────
   // Set when the assistant response or user input contains a jarvis-agent-plan block.
-  // null = no active plan.  Step statuses are mutable via the plan panel UI toggles.
-  // Cleared on new send and by the Clear plan button.
-  // Not persisted — plan resets on page refresh (v1.3.0 foundation behaviour).
+  // null = no active plan.  Step statuses and per-step notes are mutable via the
+  // plan panel UI.  Plans are persisted per session in localStorage (v1.3.1+).
+  // Cleared only by the × dismiss button (handleClearPlan).
   const [chatAgentPlan, setChatAgentPlan] = useState<AgentPlanState | null>(null);
+
+  // ── Agent plan note-editing state ─────────────────────────────────────────
+  // Only one note editor can be open at a time.
+  // editingNoteStepId — which step's note is being edited (null = none open).
+  // editingNoteText   — current draft text in the textarea.
+  const [editingNoteStepId, setEditingNoteStepId] = useState<string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState<string>("");
 
   // ── Voice input state (Web Speech API) ───────────────────────────────────
   // Whether the browser supports SpeechRecognition — set after mount to avoid SSR mismatch.
@@ -1866,7 +1882,75 @@ export default function ChatPanel({
   function handleClearPlan(): void {
     removeAgentPlanForSession(sessionIdRef.current);
     setChatAgentPlan(null);
+    // Close any open note editor so stale state doesn't linger
+    setEditingNoteStepId(null);
+    setEditingNoteText("");
     onActivity?.("Agent plan cleared", "info");
+  }
+
+  // ── Step note handlers ────────────────────────────────────────────────────
+  //
+  // Notes are manual planning annotations — they are NEVER injected into the
+  // model prompt and NEVER trigger any action.  They are stored together with
+  // the plan in localStorage so they survive page refresh.
+
+  // Open the inline note editor for a specific step.
+  // Populates the textarea with the existing note (empty string if no note yet).
+  function handleEditStepNote(stepId: string): void {
+    const step = chatAgentPlan?.steps.find((s) => s.id === stepId);
+    setEditingNoteText(step?.note ?? "");
+    setEditingNoteStepId(stepId);
+  }
+
+  // Save the draft note for a step.
+  // Trims the text and caps it at 1000 chars.
+  // An empty result clears the note field (equivalent to handleClearStepNote).
+  // Persists the updated plan immediately; logs a brief activity event.
+  function handleSaveStepNote(stepId: string): void {
+    const trimmed = editingNoteText.trim().slice(0, 1000);
+    setChatAgentPlan((prev) => {
+      if (!prev) return prev;
+      const step = prev.steps.find((s) => s.id === stepId);
+      const updated: AgentPlanState = {
+        ...prev,
+        steps: prev.steps.map((s) =>
+          s.id === stepId ? { ...s, note: trimmed || undefined } : s
+        ),
+      };
+      saveAgentPlanForSession(sessionIdRef.current, updated);
+      if (trimmed) {
+        onActivity?.(`Agent step note saved: ${step?.title ?? stepId}`, "info");
+      } else {
+        onActivity?.(`Agent step note cleared: ${step?.title ?? stepId}`, "info");
+      }
+      return updated;
+    });
+    setEditingNoteStepId(null);
+    setEditingNoteText("");
+  }
+
+  // Cancel note editing without saving. Discards the draft.
+  function handleCancelStepNote(): void {
+    setEditingNoteStepId(null);
+    setEditingNoteText("");
+  }
+
+  // Clear the note for a step directly from the display row (no editor needed).
+  // Persists the updated plan and logs an activity event.
+  function handleClearStepNote(stepId: string): void {
+    setChatAgentPlan((prev) => {
+      if (!prev) return prev;
+      const step = prev.steps.find((s) => s.id === stepId);
+      const updated: AgentPlanState = {
+        ...prev,
+        steps: prev.steps.map((s) =>
+          s.id === stepId ? { ...s, note: undefined } : s
+        ),
+      };
+      saveAgentPlanForSession(sessionIdRef.current, updated);
+      onActivity?.(`Agent step note cleared: ${step?.title ?? stepId}`, "info");
+      return updated;
+    });
   }
 
   // Start or stop microphone voice input using the browser Web Speech API.
@@ -3143,6 +3227,80 @@ export default function ChatPanel({
                         <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
                           {step.description}
                         </p>
+                      )}
+
+                      {/* ── Step note area ──────────────────────────────────
+                           Notes are manual planning annotations.
+                           They are never sent to the model. */}
+
+                      {/* Saved note display — hidden while editing this step */}
+                      {step.note && editingNoteStepId !== step.id && (
+                        <div className="mt-1.5 px-2 py-1 rounded bg-slate-900/50 border border-slate-700/40">
+                          <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">
+                            <span className="text-slate-600 select-none">Note: </span>
+                            {step.note}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Note editor — shown only for the step being edited */}
+                      {editingNoteStepId === step.id ? (
+                        <div className="mt-1.5 space-y-1">
+                          <textarea
+                            value={editingNoteText}
+                            onChange={(e) => setEditingNoteText(e.target.value.slice(0, 1000))}
+                            placeholder="Add a planning note…"
+                            rows={2}
+                            className="w-full text-xs bg-slate-800/60 border border-slate-600/50 rounded px-2 py-1 text-slate-300 placeholder-slate-600 resize-none focus:outline-none focus:border-cyan-500/40"
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveStepNote(step.id)}
+                              className="text-xs px-2 py-0.5 rounded bg-cyan-900/30 text-cyan-400 border border-cyan-600/30 hover:bg-cyan-900/50 transition-colors"
+                            >
+                              Save note
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleCancelStepNote}
+                              className="text-xs px-2 py-0.5 rounded bg-slate-700/40 text-slate-500 border border-slate-600/30 hover:bg-slate-700/60 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Note action buttons — Add / Edit + Clear */
+                        <div className="mt-1 flex items-center gap-1.5">
+                          {step.note ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleEditStepNote(step.id)}
+                                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                              >
+                                Edit note
+                              </button>
+                              <span className="text-slate-700 text-xs select-none">·</span>
+                              <button
+                                type="button"
+                                onClick={() => handleClearStepNote(step.id)}
+                                className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+                              >
+                                Clear note
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleEditStepNote(step.id)}
+                              className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                            >
+                              + Add note
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
 
