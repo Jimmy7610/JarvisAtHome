@@ -273,9 +273,21 @@ export default function WorkspacePanel({
   // When the parent requests a file to be opened, navigate to its folder (if
   // needed) and queue the file path for selection once the listing has loaded.
   // Consumes the request immediately so the parent can reset to null.
+  // openFileRequest is set by page.tsx after a ChatPanel write is approved, so
+  // its arrival here also means a write just succeeded — invalidate the overview.
   useEffect(() => {
     if (!openFileRequest) return;
     onOpenFileRequestConsumed?.();
+
+    // A write was approved in ChatPanel — invalidate the workspace overview so
+    // it reflects the updated workspace.  If visible, refresh immediately;
+    // if not visible, clear cached data so the next open fetches fresh.
+    if (showOverview) {
+      void fetchOverview();
+      onActivity?.("Workspace overview refreshed after approved write", "info");
+    } else {
+      setOverviewData(null);
+    }
 
     const slashIdx = openFileRequest.lastIndexOf("/");
     const parentDir = slashIdx > 0 ? openFileRequest.slice(0, slashIdx) : "";
@@ -542,6 +554,19 @@ export default function WorkspacePanel({
 
       // Refresh directory listing so the updated file size is shown
       void fetchList(currentPath);
+
+      // Invalidate workspace overview so it reflects the updated workspace.
+      // If the overview panel is currently visible, re-fetch it immediately
+      // so the stats, largest-file list, and recently-modified list update.
+      // If it is not visible, clear the cached data so the next open fetches
+      // fresh data automatically (the toggle button calls fetchOverview when
+      // overviewData is null).
+      if (showOverview) {
+        void fetchOverview();
+        onActivity?.("Workspace overview refreshed after approved write", "info");
+      } else {
+        setOverviewData(null);
+      }
     } catch {
       const errMsg = "API unreachable — is the Jarvis API running?";
       setApproveError(errMsg);
